@@ -1,0 +1,49 @@
+
+
+There's an error in the image generation prmopt file saving process:
+
+when the user approves of the image gen and the ai generates the prompt and saves it, it does not save the full generated but only the partial:
+
+here is the actual prompt generated:
+
+"[Subject & Framing]: A full-body, uncropped female Korean character, clearly and completely visible from the top of the head to the soles of the feet, centered perfectly inside the frame with extra margin above the head and below the feet so no body parts are cut off.
+
+[Camera]: The camera is positioned at neutral eye-level, straight-on, with no tilt, no zoom, no crop, and no perspective distortion.
+
+[Pose]: The character is standing in a strict, neutral A-pose: feet shoulder-width apart, legs straight and fully visible, arms extended downward and outward at approximately 30 degrees from the torso, elbows straight, wrists neutral, fingers relaxed and slightly separated, palms facing inward toward the thighs.
+
+[Character Details]: Female, appearing precisely 21 years old, with a slender yet athletic build, showcasing realistic human proportions. Her expression is calm and confident, with a hint of youthful determination. Her hair is a rich, glossy dark brown, styled in a contemporary "wolf cut" that features textured layers, face-framing bangs that subtly sweep to the side, and a slightly tousled, voluminous crown that gives it a "cute yet fierce" vibe. Her eyes are a warm, deep brown, almond-shaped with clear, bright whites. Her facial structure is exquisitely well-defined, with high cheekbones, a delicate jawline, and soft, natural skin tones characteristic of Korean ethnicity, free of blemishes or exaggerated makeup.
+
+[Clothing]: Her outfit consists of a finely tailored white collared shirt made of crisp cotton, impeccably ironed, with visible stitching details. It's neatly tucked into a high-waisted, pristine white pleated mini-skirt, which features sharp, uniform accordion folds that create a dynamic texture and end precisely 3 inches above the knees. Over the shirt, she wears a sophisticated, minimalist college-style coat. This coat is primarily a clean, matte white, crafted from a structured wool blend fabric. It has subtle, almost unnoticeable minimalist blue accents on the inner collar lining and a thin blue piping along the very edge of the lapels, ensuring the blue remains extremely minimal. A neatly tied, deep royal blue silk tie is cinched at her neck. Her footwear consists of clean, classic white canvas sneakers with white laces and minimal branding, providing a practical yet stylish touch. The ensemble is devoid of any weapons, armor, belts, pouches, visible jewelry, or extraneous accessories, focusing purely on the collegiate aesthetic.
+
+[Rendering]: Rendered in a hyper-realistic, high-fidelity game-ready style, mimicking the quality of a AAA character model. The lighting is soft, diffuse, and evenly distributed from a frontal studio source, meticulously highlighting the fabric textures and character contours without harsh shadows or exaggerated reflections. The background is a perfectly plain, solid medium-gray color, ensuring a clean silhouette and optimal contrast for subsequent 3D model reconstruction. The image is rendered with extreme sharp focus from foreground to background, ensuring every detail is clear and crisp."
+
+
+and here is the saved prompt in the users project:
+
+[Subject & Framing]: A full-body, uncropped female Korean character, clearly and completely visible from the top of the head to the soles of the feet, centered perfectly inside the frame with extra margin above the head and below the feet so no body parts are cut off.
+
+[Camera]: The camera is positioned at neutral eye-level, straight-on, with no tilt, no zoom, no crop, and no perspective distortion.
+
+[Pose]: The character is standing in a strict, neutral A-pose: feet shoulder-width apart, legs straight and fully visible, arms extended downward and outward at approximately 30 degrees from the torso, elbows straight, wrists neutral, fingers relaxed and slightly separated, palms facing inward toward the thighs.
+
+[Character Details]: Female, appearing precisely 21 years old, with a slender yet athletic build, showcasing realistic human proportions. Her expression is calm and confident, with a hint of youthful determination. Her hair is a rich, glossy dark brown, styled in a contemporary
+--
+
+
+also another error while generating images in the chatting interface:
+
+api/hyperreal/v1/images/generate:1  Failed to load resource: the server responded with a status of 500 (Internal Server Error)
+hyperreal.ts:90 HyperReal model 'nano-banana-t2i' failed: HyperReal API error: 500 Internal Server Error - {"error":{"code":"E9999","message":"An unexpected error occurred. Please try again.","type":"api_error"}}
+generateImageWithHyperreal @ hyperreal.ts:90
+hyperreal.ts:92 Trying fallback model...
+chunk-6U2VCH2A.js?v=08401a12:17697 Error generating 3D images: Error: HyperReal API error: 500 Internal Server Error - {"error":{"code":"E9999","message":"An unexpected error occurred. Please try again.","type":"api_error"}}
+    at hyperreal.ts:73:19
+    at async withApiFallback (apiFallback.ts:61:16)
+    at async generateImageWithHyperreal (hyperreal.ts:34:22)
+    at async generate3DViews (imageGenerationHelpers.ts:210:21)
+    at async WorkflowManager.tsx:385:25
+    at async WorkflowManager.tsx:771:9
+
+    __
+NOTE: also make sure that the image generation uses the saved prompt file and if there is serveral prompt files, then uses the most recent one. unless the user tell the llm to use the exact prompt file instead like "@prompt/character.txt"

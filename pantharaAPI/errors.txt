@@ -1,0 +1,13 @@
+
+
+F:\koye\my-app\pantharaAPI>node server.js
+AI Image Generator API running on port 3000
+Access via: http://localhost:3000/?model=dall-e-3&prompt=your-prompt
+Image generation failed: TimeoutError: Waiting failed: 120000ms exceeded
+    at new WaitTask (F:\koye\my-app\pantharaAPI\node_modules\puppeteer-core\lib\cjs\puppeteer\common\WaitTask.js:48:34)
+    at IsolatedWorld.waitForFunction (F:\koye\my-app\pantharaAPI\node_modules\puppeteer-core\lib\cjs\puppeteer\api\Realm.js:25:26)
+    at CdpFrame.waitForFunction (F:\koye\my-app\pantharaAPI\node_modules\puppeteer-core\lib\cjs\puppeteer\api\Frame.js:571:43)
+    at CdpFrame.<anonymous> (F:\koye\my-app\pantharaAPI\node_modules\puppeteer-core\lib\cjs\puppeteer\util\decorators.js:109:27)
+    at CdpPage.waitForFunction (F:\koye\my-app\pantharaAPI\node_modules\puppeteer-core\lib\cjs\puppeteer\api\Page.js:1434:37)
+    at generateImageFromIndex (F:\koye\my-app\pantharaAPI\server.js:24:20)
+    at async Server.<anonymous> (F:\koye\my-app\pantharaAPI\server.js:69:29)

@@ -1,0 +1,34 @@
+{
+    "name": "ai-image-generator-api",
+    "version": "1.0.0",
+    "description": "API service for generating AI images with multiple models and returning Base64 encoded results",
+    "main": "index.html",
+    "scripts": {
+        "start": "node server.js",
+        "dev": "node server.js",
+        "test": "echo \"No tests specified\" && exit 0"
+    },
+    "keywords": [
+        "ai",
+        "image-generation",
+        "api",
+        "puter",
+        "dall-e",
+        "stable-diffusion",
+        "gemini",
+        "flux"
+    ],
+    "author": "Your Name",
+    "license": "MIT",
+    "engines": {
+        "node": ">=14.0.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/your-username/ai-image-generator-api"
+    },
+    "homepage": "https://github.com/your-username/ai-image-generator-api#readme",
+    "dependencies": {
+        "puppeteer": "^23.11.1"
+    }
+}

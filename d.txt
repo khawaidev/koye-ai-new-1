@@ -1,0 +1,74 @@
+
+
+when i do the image eidt in the builder page error:🖼️ Starting image edit with:
+BuilderInspector.tsx:152    - Engine: nano-banana-edit
+BuilderInspector.tsx:153    - Selected Asset: Objectcontent: "https://pub-d259d1d2737843cb8bcb2b1ff98fc9c6.r2.dev/generated/images/db770189-d96f-4cc3-8e9c-26c3fc6d3313.png"name: "legent.png"path: "assets/images/legent.png"type: "image"url: "https://pub-d259d1d2737843cb8bcb2b1ff98fc9c6.r2.dev/generated/images/db770189-d96f-4cc3-8e9c-26c3fc6d3313.png"[[Prototype]]: Object
+BuilderInspector.tsx:154    - Image URL (from url || content): https://pub-d259d1d2737843cb8bcb2b1ff98fc9c6.r2.dev/generated/images/db770189-d96f-4cc3-8e9c-26c3fc6d3313.png
+BuilderInspector.tsx:155    - URL type: HTTP URL
+BuilderInspector.tsx:158    - Prompt: make the blade less shiny
+hyperreal.ts:260 📤 HyperReal Image Edit Request:
+hyperreal.ts:261    Prompt: make the blade less shiny
+hyperreal.ts:262    Image URL: https://pub-d259d1d2737843cb8bcb2b1ff98fc9c6.r2.dev/generated/images/db770189-d9...
+hyperreal.ts:284 ✅ HyperReal image edit completed
+hyperreal.ts:285    Credits used: 3
+BuilderInspector.tsx:182 ✅ Image edit completed successfully!
+projectFiles.ts:218 [saveProjectFilesToStorage] Saving 5 files for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:219 [saveProjectFilesToStorage] GitHub connection: Object
+projectFiles.ts:237 [saveProjectFilesToStorage] Code files: 1, Non-code files: 4
+projectFiles.ts:238 [saveProjectFilesToStorage] Code file paths: Array(1)0: "README.md"length: 1[[Prototype]]: Array(0)
+projectFiles.ts:247 [saveProjectFilesToStorage] Syncing 1 code files to GitHub...
+projectFiles.ts:274 Saving 1 code files to GitHub for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:289 ✓ Synced README.md to GitHub
+Builder.tsx:226 Auto-saved project files
+projectFiles.ts:218 [saveProjectFilesToStorage] Saving 5 files for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:219 [saveProjectFilesToStorage] GitHub connection: {repoOwner: 'khawain-tech', repoName: 'koye-projects', branch: 'main'}
+projectFiles.ts:237 [saveProjectFilesToStorage] Code files: 1, Non-code files: 4
+projectFiles.ts:238 [saveProjectFilesToStorage] Code file paths: ['README.md']
+projectFiles.ts:247 [saveProjectFilesToStorage] Syncing 1 code files to GitHub...
+projectFiles.ts:274 Saving 1 code files to GitHub for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:289 ✓ Synced README.md to GitHub
+Builder.tsx:226 Auto-saved project files
+projectFiles.ts:218 [saveProjectFilesToStorage] Saving 5 files for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:219 [saveProjectFilesToStorage] GitHub connection: {repoOwner: 'khawain-tech', repoName: 'koye-projects', branch: 'main'}
+projectFiles.ts:237 [saveProjectFilesToStorage] Code files: 1, Non-code files: 4
+projectFiles.ts:238 [saveProjectFilesToStorage] Code file paths: ['README.md']
+projectFiles.ts:247 [saveProjectFilesToStorage] Syncing 1 code files to GitHub...
+projectFiles.ts:274 Saving 1 code files to GitHub for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:289 ✓ Synced README.md to GitHub
+Builder.tsx:226 Auto-saved project files
+projectFiles.ts:218 [saveProjectFilesToStorage] Saving 5 files for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:219 [saveProjectFilesToStorage] GitHub connection: {repoOwner: 'khawain-tech', repoName: 'koye-projects', branch: 'main'}
+projectFiles.ts:237 [saveProjectFilesToStorage] Code files: 1, Non-code files: 4
+projectFiles.ts:238 [saveProjectFilesToStorage] Code file paths: ['README.md']
+projectFiles.ts:247 [saveProjectFilesToStorage] Syncing 1 code files to GitHub...
+projectFiles.ts:274 Saving 1 code files to GitHub for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:289 ✓ Synced README.md to GitHub
+Builder.tsx:226 Auto-saved project files
+projectFiles.ts:218 [saveProjectFilesToStorage] Saving 5 files for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:219 [saveProjectFilesToStorage] GitHub connection: {repoOwner: 'khawain-tech', repoName: 'koye-projects', branch: 'main'}
+projectFiles.ts:237 [saveProjectFilesToStorage] Code files: 1, Non-code files: 4
+projectFiles.ts:238 [saveProjectFilesToStorage] Code file paths: ['README.md']
+projectFiles.ts:247 [saveProjectFilesToStorage] Syncing 1 code files to GitHub...
+projectFiles.ts:274 Saving 1 code files to GitHub for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:289 ✓ Synced README.md to GitHub
+Builder.tsx:226 Auto-saved project files
+projectFiles.ts:218 [saveProjectFilesToStorage] Saving 5 files for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:219 [saveProjectFilesToStorage] GitHub connection: {repoOwner: 'khawain-tech', repoName: 'koye-projects', branch: 'main'}
+projectFiles.ts:237 [saveProjectFilesToStorage] Code files: 1, Non-code files: 4
+projectFiles.ts:238 [saveProjectFilesToStorage] Code file paths: ['README.md']
+projectFiles.ts:247 [saveProjectFilesToStorage] Syncing 1 code files to GitHub...
+projectFiles.ts:274 Saving 1 code files to GitHub for project f2464c06-eb5c-4bea-b8a6-9099e2e3a80f
+projectFiles.ts:289 ✓ Synced README.md to GitHub
+Builder.tsx:226 Auto-saved project files, and also that the produced image does not look like the original image at all, as if there was no reference image submitted(or even if it was submitted it was not accessable by the hyperal  endpoint from the app), and it seems it only used the text(decribed to edit the image) to generate a new image
+ and when i click and visit this page:
+https://pub-d259d1d2737843cb8bcb2b1ff98fc9c6.r2.dev/generated/images/db770189-d9
+
+it says:
+
+Error 404
+Object not found
+This object does not exist or is not publicly accessible at this URL. Check the URL of the object that you're looking for or contact the owner to enable Public access.
+
+Is this your bucket?
+
+Learn how to enable Public Access

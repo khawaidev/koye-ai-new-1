@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Image Generator API</title>
+</head>
+<body>
+    <div id="content">
+        <h1>AI Image Generator API</h1>
+        <p>Loading API response...</p>
+    </div>
+
+    <script src="https://js.puter.com/v2/"></script>
+    <script>
+        // Get model and prompt from URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const model = urlParams.get('model');
+        const customPrompt = urlParams.get('prompt') || "A futuristic city with flying cars";
+        
+        const contentDiv = document.getElementById('content');
+        
+        if (!model) {
+            // Show documentation if no model specified
+            contentDiv.innerHTML = `
+                <h1>🖼️ AI Image Generator API</h1>
+                <p>This service generates AI images using various models and returns Base64-encoded images.</p>
+                
+                <div style="background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0;">
+                    <h3>📍 Current Service URL</h3>
+                    <p>Your service is running locally at: <strong>http://localhost:3000</strong></p>
+                </div>
+
+                <h3>🚀 Usage Examples:</h3>
+                <div style="background: #f8f9fa; padding: 10px; border-radius: 5px; margin: 10px 0; font-family: monospace;">
+                    GET http://localhost:3000/?model=dall-e-3&prompt=a beautiful sunset
+                </div>
+                <div style="background: #f8f9fa; padding: 10px; border-radius: 5px; margin: 10px 0; font-family: monospace;">
+                    GET http://localhost:3000/?model=stabilityai/stable-diffusion-3-medium&prompt=futuristic city
+                </div>
+
+                <h3>📋 Available Models:</h3>
+                <div style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px; background-color: #f8f9fa;">
+                    <ul>
+                        <li>gemini-2.5-flash-image-preview</li>
+                        <li>gpt-image-1</li>
+                        <li>gpt-image-1-mini</li>
+                        <li>dall-e-3</li>
+                        <li>dall-e-2</li>
+                        <li>ByteDance-Seed/Seedream-3.0</li>
+                        <li>ByteDance-Seed/Seedream-4.0</li>
+                        <li>HiDream-ai/HiDream-I1-Dev</li>
+                        <li>HiDream-ai/HiDream-I1-Fast</li>
+                        <li>HiDream-ai/HiDream-I1-Full</li>
+                        <li>Lykon/DreamShaper</li>
+                        <li>Qwen/Qwen-Image</li>
+                        <li>RunDiffusion/Juggernaut-pro-flux</li>
+                        <li>Rundiffusion/Juggernaut-Lightning-Flux</li>
+                        <li>black-forest-labs/FLUX.1-Canny-pro</li>
+                        <li>black-forest-labs/FLUX.1-dev</li>
+                        <li>black-forest-labs/FLUX.1-dev-lora</li>
+                        <li>black-forest-labs/FLUX.1-kontext-dev</li>
+                        <li>black-forest-labs/FLUX.1-kontext-max</li>
+                        <li>black-forest-labs/FLUX.1-kontext-pro</li>
+                        <li>black-forest-labs/FLUX.1-krea-dev</li>
+                        <li>black-forest-labs/FLUX.1-pro</li>
+                        <li>black-forest-labs/FLUX.1-schnell</li>
+                        <li>black-forest-labs/FLUX.1-schnell-Free</li>
+                        <li>black-forest-labs/FLUX.1.1-pro</li>
+                        <li>google/flash-image-2.5</li>
+                        <li>google/imagen-4.0-fast</li>
+                        <li>google/imagen-4.0-preview</li>
+                        <li>google/imagen-4.0-ultra</li>
+                        <li>ideogram/ideogram-3.0</li>
+                        <li>stabilityai/stable-diffusion-3-medium</li>
+                        <li>stabilityai/stable-diffusion-xl-base-1.0</li>
+                    </ul>
+                </div>
+            `;
+        } else {
+            // Generate image and return as Base64
+            contentDiv.innerHTML = '<p>Generating image with ' + model + '...</p>';
+            
+            puter.ai.txt2img(customPrompt, { model: model })
+                .then(img => {
+                    // Convert image to Base64
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Set canvas dimensions to match image
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    
+                    // Draw image on canvas
+                    ctx.drawImage(img, 0, 0);
+                    
+                    // Convert to Base64
+                    const base64Image = canvas.toDataURL('image/png');
+                    
+                    // Return JSON response with Base64 image
+                    const successResponse = {
+                        success: true,
+                        model: model,
+                        prompt: customPrompt,
+                        imageFormat: "png",
+                        imageData: base64Image,
+                        dimensions: {
+                            width: img.width,
+                            height: img.height
+                        },
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    // Set content type header and return JSON
+                    document.write(JSON.stringify(successResponse));
+                })
+                .catch(error => {
+                    // Return error response
+                    const errorResponse = {
+                        success: false,
+                        error: error.message,
+                        model: model,
+                        prompt: customPrompt,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    document.write(JSON.stringify(errorResponse));
+                });
+        }
+    </script>
+</body>
+</html>

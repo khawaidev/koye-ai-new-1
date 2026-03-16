@@ -1,0 +1,60 @@
+
+
+<html>
+<body>
+    <h2>Different Models Comparison</h2>
+    <div id="images"></div>
+    
+    <script src="https://js.puter.com/v2/"></script>
+    <script>
+        const prompt = "A futuristic city with flying cars";
+        const container = document.getElementById('images');
+        container.innerHTML = '';
+
+        // GPT Image with low quality
+        puter.ai.txt2img(prompt, { model: "gpt-image-1", quality: "low" })
+            .then(img => {
+                const div = document.createElement('div');
+                div.innerHTML = '<h3>GPT Image (Quality set to low)</h3>';
+                div.appendChild(img);
+                container.appendChild(div);
+            });
+
+        // DALL-E 3 with high quality
+        puter.ai.txt2img(prompt, { model: "dall-e-3", quality: "hd" })
+            .then(img => {
+                const div = document.createElement('div');
+                div.innerHTML = '<h3>DALL-E 3 (Quality set to hd)</h3>';
+                div.appendChild(img);
+                container.appendChild(div);
+            });
+
+        // Gemini 2.5 Flash Image Preview (Nano Banana)
+        puter.ai.txt2img(prompt, { model: "gemini-2.5-flash-image-preview" })
+                .then(img => {
+                    const div = document.createElement('div');
+                    div.innerHTML = '<h3>Gemini 2.5 Flash Image Preview (Nano Banana)</h3>';
+                    div.appendChild(img);
+                    container.appendChild(div);
+                });
+
+        // Stable Diffusion 3
+        puter.ai.txt2img(prompt, { model: "stabilityai/stable-diffusion-3-medium" })
+                .then(img => {
+                    const div = document.createElement('div');
+                    div.innerHTML = '<h3>Stable Diffusion 3</h3>';
+                    div.appendChild(img);
+                    container.appendChild(div);
+                });
+
+        // Flux.1 Schnell
+        puter.ai.txt2img(prompt, { model: "black-forest-labs/FLUX.1-schnell" })
+                .then(img => {
+                    const div = document.createElement('div');
+                    div.innerHTML = '<h3>Flux.1 Schnell</h3>';
+                    div.appendChild(img);
+                    container.appendChild(div);
+                });
+    </script>
+</body>
+</html>

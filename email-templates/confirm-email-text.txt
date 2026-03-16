@@ -1,0 +1,18 @@
+TERMINAL WRITER
+===============
+
+Last login: {{ .Date }}
+
+$ confirm_your_signup
+
+Follow this link to confirm your user account:
+
+{{ .ConfirmationURL }}
+
+This link will expire in 24 hours.
+
+---
+
+KOYE_AI
+$ AI-Powered Game Asset Creation
+

@@ -1,0 +1,9 @@
+
+Here are some implementations that needs to be done:
+
+1.Add a new feature called web search in the chatting interface, which will allow the ai to search the web for information and use it to generate content.[this should be triggered by the ai in the chatting interface only when the ai/llm does not have the idea of the user's chat or request, and the ai should also be able to understand when it needs to use the web search and when not to use it very strctly]
+-the web search feature is done through an api called searchapi(i've already put it in the env), and this search api supports google search, google image , google videos, etc and the steps to set up and the documentation is in this file searchapi.md
+and when this feature is being triggered in the chatting interface by the ai/llm , it should show the live loading state of the search and when done presenting the response[that should include texts. images, videoes form the seaerches according to the user chat or request] it should also show the sources of the searches.
+
+
+[DONE]

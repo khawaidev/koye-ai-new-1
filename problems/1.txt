@@ -1,0 +1,9 @@
+
+
+Here are the problems that needs checking and fixing:
+
+
+1.when the user creates a project in the chatting interface, it is taking too much time to do it.
+
+2.in the chatting interface after connected to a project , when i try to mention the file from the project by using "@" for example "@main.js" and select it, the files selecions are not coming even if the project has files and folders in it.(this happnes somtimes)
+

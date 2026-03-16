@@ -1,0 +1,5 @@
+
+
+Here are the changes that needs to be done:
+
+1. the chatting llm in the chatting interface should be made to recommend user to generate characters(mainly 3d models, and for main characters/player characters, which needs to be animated first without the equipments or items and also needs to change items or equiepment) to generate them without any equipments or items. but only with starter clothes etc, because the model needs to be clean to generate the initial animations and rigging and then the user can add the items or equipments later on and add them.
