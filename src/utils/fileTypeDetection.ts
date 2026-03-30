@@ -154,7 +154,7 @@ export function detectFileType(path: string): FileTypeInfo {
   // Default to unknown
   return {
     category: "unknown",
-    isBinary: false
+    isBinary: true
   }
 }
 

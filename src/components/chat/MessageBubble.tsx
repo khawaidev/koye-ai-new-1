@@ -2,6 +2,7 @@ import React from "react"
 import ReactMarkdown from "react-markdown"
 import { cn } from "../../lib/utils"
 import { PixelImage } from "../ui/pixel-image"
+import { SquareLoader } from "../ui/SquareLoader"
 import { ChatAvatar } from "./VoiceChatLayout"
 
 interface MessageBubbleProps {
@@ -60,13 +61,8 @@ export function MessageBubble({
           )}
         >
           {isThinking ? (
-            <div className="flex items-center gap-3 px-3">
-              <span className="text-muted-foreground">Thinking...</span>
-              <span className="inline-flex gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: '300ms' }} />
-              </span>
+            <div className="flex items-center gap-2 px-1 py-1">
+              <SquareLoader />
             </div>
           ) : (
             <div className={cn(

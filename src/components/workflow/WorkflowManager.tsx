@@ -9,14 +9,15 @@ import { checkJobStatus, generate3DModel } from "../../services/hitem3d"
 import { generate3DViews, generateSampleImages, generateSprites, type ImageModel } from "../../services/imageGenerationHelpers"
 import { saveModel, saveVideo } from "../../services/multiDbDataService"
 import { saveSingleProjectFile } from "../../services/projectFiles"
-import { createVideoPrediction, pollVideoPrediction } from "../../services/videoGeneration"
+import { generateVideoWithRunway } from "../../services/runwayml"
 import type { Image, ImageView, Message, ModelStatus } from "../../store/useAppStore"
 import { useAppStore } from "../../store/useAppStore"
 import { useGameDevStore } from "../../store/useGameDevStore"
-import { useTaskStore } from "../../store/useTaskStore"
+import { useTaskStore, getTaskDisplayName } from "../../store/useTaskStore"
+import { Builder } from "../../pages/Builder"
 import { AudioGeneration } from "../audio-generation/AudioGeneration"
 import { ChatInterface } from "../chat/ChatInterface"
-import { ImageGeneration } from "../image-generation/ImageGeneration"
+import { MediaGeneration } from "../media-generation/MediaGeneration"
 import { ImageViewer } from "../image-viewer/ImageViewer"
 import { Model3DGeneration } from "../model-generation/Model3DGeneration"
 import { ModelViewer } from "../model-viewer/ModelViewer"
@@ -26,10 +27,12 @@ import { Button } from "../ui/button"
 import { SignUpPopup } from "../ui/SignUpPopup"
 import { useToast } from "../ui/toast"
 import { VideoGenerationLoader } from "../ui/VideoGenerationLoader"
-import { VideoGeneration } from "../video-generation/VideoGeneration"
+
+import { Dashboard } from "../../pages/Dashboard"
+import { AnimationsLibrary } from "../../pages/AnimationsLibrary"
 import { WorkflowStepIndicator, type WorkflowStage as IndicatorStage } from "./WorkflowStepIndicator"
 
-type WorkflowStage = "chat" | "images" | "model" | "texture" | "rig" | "animate" | "audio" | "export" | "build" | "imageGeneration" | "videoGeneration" | "audioGeneration" | "model3DGeneration" | "sprites"
+type WorkflowStage = "chat" | "images" | "model" | "texture" | "rig" | "animate" | "audio" | "export" | "build" | "imageGeneration" | "videoGeneration" | "mediaGeneration" | "audioGeneration" | "model3DGeneration" | "sprites" | "dashboard" | "animations"
 type GameType = "3d" | "2d" | null
 type AssetType = "static" | "animated" | null
 
@@ -54,6 +57,10 @@ export function WorkflowManager() {
     // generatedFiles, // unused
     addGeneratedFile,
     githubConnection,
+    stage,
+    setStage,
+    isSidebarOpen,
+    setIsSidebarOpen,
   } = useAppStore()
   // const isGenerating = useAppStore((state) => state.isGenerating) // unused
   const { addToast } = useToast()
@@ -63,8 +70,6 @@ export function WorkflowManager() {
     currentStep: gameDevStep,
     gameType: gameDevType
   } = useGameDevStore()
-
-  const [stage, setStage] = useState<WorkflowStage>("chat")
 
   // Listen for model fallback errors
   useEffect(() => {
@@ -85,7 +90,6 @@ export function WorkflowManager() {
   const [approvedViews, setApprovedViews] = useState<Set<ImageView>>(new Set())
   const [imagePrompt, setImagePrompt] = useState<string>("")
   const [showPromptEditor, setShowPromptEditor] = useState(false)
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [showSignUpPopup, setShowSignUpPopup] = useState(false)
   const [isGeneratingImages, setIsGeneratingImages] = useState(false) // Separate flag for image generation
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false) // Separate flag for video generation
@@ -296,7 +300,7 @@ export function WorkflowManager() {
                   addGeneratedFile(fileName, saved.url)
                 }
 
-                // Save metadata as .md to GitHub (isCodeFile recognizes .md)
+                // Save metadata as .md (separate metadata file)
                 const imageContent = `# Image Asset\n\n- **ID:** ${saved.id}\n- **URL:** ${saved.url}\n- **View:** ${original.view}\n- **Generated:** ${new Date().toISOString()}\n`
                 await saveSingleProjectFile(
                   currentProject.id,
@@ -307,18 +311,19 @@ export function WorkflowManager() {
                   githubConnection
                 )
 
-                // Also save image reference to Supabase (non-code file for persistence)
+                // Save the actual image (URL or data URL) — this is what the Builder viewer loads
+                const imageFileContent = (useAppStore.getState().generatedFiles || {})[fileName] || saved.url
                 await saveSingleProjectFile(
                   currentProject.id,
                   user.id,
                   currentProject.name,
                   fileName,
-                  imageContent,
+                  imageFileContent,
                   githubConnection
                 )
               })
             )
-            console.log(`✅ Saved ${successfulAssets.length} images to project and GitHub: ${currentProject.name}`)
+            console.log(`✅ Saved ${successfulAssets.length} images to project: ${currentProject.name}`)
           } catch (projectError) {
             console.error("Error saving images to project:", projectError)
           }
@@ -555,7 +560,7 @@ export function WorkflowManager() {
 
   // Handle video generation (cutscenes)
   const handleGenerateVideo = useCallback(async (
-    imageUrls: string[],
+    _imageUrls: string[],
     prompt: string,
     assistantMessageId: string
   ) => {
@@ -563,32 +568,14 @@ export function WorkflowManager() {
       setIsGenerating(true)
       setIsGeneratingVideo(true)
 
-      // Create video prediction
-      const predictionId = await createVideoPrediction({
-        images: imageUrls,
-        prompt: prompt || "",
-        loop: false,
-        maxWidth: 512,
-        maxHeight: 512,
-        interpolate: false,
-        colorCorrection: true,
+      // Create video using Runway
+      const videoUrl = await generateVideoWithRunway(prompt || "animated cutscene", {
+        model: "veo3.1",
+        ratio: "1280:720",
+        duration: 8
       })
 
-      // Poll for completion
-      const prediction = await pollVideoPrediction(
-        predictionId,
-        (status) => {
-          console.log("Video generation status:", status)
-          if (!useAppStore.getState().isGenerating) {
-            throw new Error("Cancelled by user")
-          }
-        },
-        60, // max attempts
-        3000 // 3 second intervals
-      )
-
-      if (prediction.output && prediction.output.length > 0) {
-        const videoUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output
+      if (videoUrl) {
 
         // Save video to database if user is authenticated
         if (isAuthenticated && user) {
@@ -613,7 +600,7 @@ export function WorkflowManager() {
                 // Add to Builder sidebar
                 addGeneratedFile(fileName, videoUrl)
 
-                // Save metadata .md to GitHub
+                // Save metadata .md to project
                 await saveSingleProjectFile(
                   currentProject.id,
                   user.id,
@@ -622,15 +609,15 @@ export function WorkflowManager() {
                   videoContent,
                   githubConnection
                 )
-                console.log(`✅ Saved video metadata to GitHub: ${metadataFileName}`)
+                console.log(`✅ Saved video metadata to project: ${metadataFileName}`)
 
-                // Save video reference to Supabase (non-code file)
+                // Save video URL to project (this is what the Builder viewer loads)
                 await saveSingleProjectFile(
                   currentProject.id,
                   user.id,
                   currentProject.name,
                   fileName,
-                  videoContent,
+                  videoUrl,
                   githubConnection
                 )
                 console.log(`✅ Saved video to project: ${currentProject.name}`)
@@ -1456,7 +1443,7 @@ export function WorkflowManager() {
                     // Add model to Builder sidebar
                     addGeneratedFile(modelFileName, status.result.modelUrl)
 
-                    // Save metadata as .md file — this syncs to GitHub (isCodeFile recognizes .md)
+                    // Save metadata as .md file
                     await saveSingleProjectFile(
                       currentProject.id,
                       user.id,
@@ -1465,15 +1452,15 @@ export function WorkflowManager() {
                       modelContent,
                       githubConnection
                     )
-                    console.log(`✅ Saved model metadata to GitHub: ${metadataFileName}`)
+                    console.log(`✅ Saved model metadata to project: ${metadataFileName}`)
 
-                    // Also save model reference to Supabase (non-code file)
+                    // Save model URL to project (this is what the Builder viewer loads)
                     await saveSingleProjectFile(
                       currentProject.id,
                       user.id,
                       currentProject.name,
                       modelFileName,
-                      modelContent,
+                      status.result.modelUrl,
                       githubConnection
                     )
                     console.log(`✅ Saved model to project: ${currentProject.name}`)
@@ -1605,7 +1592,7 @@ export function WorkflowManager() {
           .join(" ")
       }
 
-      // Save the generated prompt to GitHub (saves ONLY the extracted prompt, not the chat)
+      // Save the generated prompt to project (saves ONLY the extracted prompt, not the chat)
       const savePromptText = async (promptContent: string, type: string) => {
         if (!isAuthenticated || !user || !currentProject) return
         try {
@@ -1619,11 +1606,20 @@ export function WorkflowManager() {
 
           await saveSingleProjectFile(currentProject.id, user.id, currentProject.name || "project", path, promptContent)
 
-          // Show a confirmation in chat
+          // Show a combined confirmation in chat
+          let backgroundMessage = ""
+          if (taskId) {
+            const task = useTaskStore.getState().tasks.find((t: any) => t.id === taskId)
+            if (task) {
+              const taskDisplayName = getTaskDisplayName(task.type)
+              backgroundMessage = `\n\nGot it! I've started **${taskDisplayName}** in the background — you can track its progress in the task bar above. While that's running, tell me more about your idea or ask me anything else! 🚀`
+            }
+          }
+
           const sysMsg: Message = {
             id: uuidv4(),
             role: "assistant",
-            content: `Saved generated prompt to \`${path}\``,
+            content: `Saved generated prompt to \`${path}\`${backgroundMessage}`,
             timestamp: new Date()
           }
           setMessages([...useAppStore.getState().messages, sysMsg])
@@ -1886,7 +1882,7 @@ export function WorkflowManager() {
     <div className="flex h-screen bg-background overflow-hidden text-foreground">
       {/* Left Sidebar - Always visible (Grok-style) */}
       <div className="shrink-0 transition-all duration-300 relative">
-        <LeftSidebar isOpen={isSidebarOpen} stage={stage} setStage={setStage} onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />
+        <LeftSidebar isOpen={isSidebarOpen} stage={stage as any} setStage={setStage} onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />
       </div>
 
       {/* Main Content Area */}
@@ -1896,24 +1892,11 @@ export function WorkflowManager() {
           <div className="flex-1 min-w-0 overflow-hidden">
             {stage === "chat" && <ChatInterface />}
 
-            {stage === "imageGeneration" && (
-              <ImageGeneration
-                isSidebarOpen={isSidebarOpen}
-                onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-              />
-            )}
-
-            {stage === "videoGeneration" && (
-              <VideoGeneration
-                isSidebarOpen={isSidebarOpen}
-                onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-              />
+            {(stage === "imageGeneration" || stage === "videoGeneration" || stage === "mediaGeneration") && (
+              <MediaGeneration />
             )}
             {stage === "audioGeneration" && (
-              <AudioGeneration
-                isSidebarOpen={isSidebarOpen}
-                onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-              />
+              <AudioGeneration />
             )}
 
             {stage === "model3DGeneration" && <Model3DGeneration />}
@@ -1925,6 +1908,10 @@ export function WorkflowManager() {
                 onBack={() => setStage("chat")}
               />
             )}
+
+            {stage === "dashboard" && <Dashboard />}
+
+            {stage === "animations" && <AnimationsLibrary />}
 
             {stage === "images" && (
               <div className="flex h-full flex-col overflow-hidden">
@@ -2087,10 +2074,18 @@ export function WorkflowManager() {
                     </Button>
                   </div>
                 </div>
+              ) : currentProject ? (
+                <Builder />
               ) : (
                 <div className="flex h-full items-center justify-center">
-                  <div className="text-center text-muted-foreground font-mono">
-                    <p className="text-lg">Build coming soon...</p>
+                  <div className="text-center">
+                    <p className="text-foreground font-mono text-lg mb-4">$ no_project_connected</p>
+                    <Button
+                      onClick={() => setStage("chat")}
+                      className="bg-foreground text-background hover:bg-muted-foreground border border-foreground font-mono"
+                    >
+                      $ create_project
+                    </Button>
                   </div>
                 </div>
               )
@@ -2098,11 +2093,11 @@ export function WorkflowManager() {
           </div>
 
           {/* Right Sidebar - Step Indicator */}
-          {stage !== "model3DGeneration" && (
+          {stage !== "model3DGeneration" && stage !== "build" && stage !== "dashboard" && stage !== "mediaGeneration" && stage !== "audioGeneration" && stage !== "animations" && (
             <div className="shrink-0 w-32 mt-12 overflow-y-auto overflow-x-hidden scrollbar-thin">
               <WorkflowStepIndicator
                 currentStage={stage === "imageGeneration" ? "chat" : (stage as IndicatorStage)}
-                completedStages={new Set(Array.from(completedStages).filter(s => s !== "imageGeneration" && s !== "model3DGeneration") as Array<IndicatorStage>)}
+                completedStages={new Set(Array.from(completedStages).filter(s => s !== "imageGeneration" && s !== "model3DGeneration" && s !== "animations") as Array<IndicatorStage>)}
                 isAuthenticated={isAuthenticated}
                 isGameDevActive={isGameDevActive}
                 gameDevStep={gameDevStep}

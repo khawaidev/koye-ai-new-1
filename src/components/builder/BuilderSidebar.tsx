@@ -1,11 +1,12 @@
 import { Box, Check, ChevronDown, ChevronRight, Clipboard, ClipboardCopy, Code, File, Folder, FolderOpen, Image as ImageIcon, MoreVertical, Music, Pencil, Scissors, Trash2, Upload, Video, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { cn } from "../../lib/utils"
-import { deleteProjectFile } from "../../services/projectFiles"
+import { deleteProjectFile, saveSingleProjectFile } from "../../services/projectFiles"
 import { useAppStore } from "../../store/useAppStore"
 import { isSettingsFile } from "../../utils/projectSettings"
 import { buildFileTree, type FileNode } from "../sidebar/FileSystemSidebar"
 import { Button } from "../ui/button"
+import type { UploadOverlayState } from "../../pages/Builder"
 
 interface BuilderSidebarProps {
     selectedFile: string | null
@@ -13,9 +14,11 @@ interface BuilderSidebarProps {
     onFileCreated?: () => void
     projectId?: string
     userId?: string
+    onFileSynced?: (path: string, content: string | null) => void
+    onUploadStateChange?: (state: UploadOverlayState | null) => void
 }
 
-export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, projectId, userId }: BuilderSidebarProps) {
+export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, projectId, userId, onFileSynced, onUploadStateChange }: BuilderSidebarProps) {
     // githubConnection is used when auto-save uploads files - it's passed down via store
     const { generatedFiles, images, currentModel, addGeneratedFile, setGeneratedFiles, githubConnection: _githubConnection } = useAppStore()
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(["assets", "assets/images", "assets/videos", "assets/models", "assets/audio"]))
@@ -34,9 +37,8 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
 
     // Drag and drop state
     const [isDragOver, setIsDragOver] = useState(false)
-    const [isUploading, setIsUploading] = useState(false)
-    const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null)
     const dropZoneRef = useRef<HTMLDivElement>(null)
+    const fileInputRef = useRef<HTMLInputElement>(null)
 
     // Helper to determine file type from extension
     const getFileType = (fileName: string): 'image' | 'model' | 'video' | 'audio' | 'code' | 'other' => {
@@ -58,7 +60,9 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
     // Check if file is binary (needs base64 encoding)
     const isBinaryFile = (fileName: string): boolean => {
         const fileType = getFileType(fileName)
-        return ['image', 'model', 'video', 'audio'].includes(fileType)
+        // Treat everything as binary EXCEPT explicitly text/code files
+        // This prevents corruption of unknown binary files (like .pdf, .zip)
+        return fileType !== 'code'
     }
 
     // Handle drag events
@@ -83,88 +87,138 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
     }
 
     // Handle file drop
+    // Handle file drop
     const handleDrop = async (e: React.DragEvent) => {
         e.preventDefault()
         e.stopPropagation()
         setIsDragOver(false)
 
         const files = Array.from(e.dataTransfer.files)
+        await handleFiles(files)
+    }
+
+    const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files) {
+            const files = Array.from(e.target.files)
+            await handleFiles(files)
+            e.target.value = ''
+        }
+    }
+
+    const handleFiles = async (files: File[]) => {
         if (files.length === 0) return
 
-        setIsUploading(true)
-        setUploadProgress({ current: 0, total: files.length })
+        if (!projectId || !userId) {
+            alert('Project not ready. Please wait and try again.')
+            return
+        }
+
+        // User uploads ALWAYS go to 'uploads/' folder
+        const basePath = 'uploads'
+
+        // Initialize upload state for the overlay in Builder.tsx
+        const fileStatuses: Array<{ name: string; status: 'pending' | 'reading' | 'uploading' | 'success' | 'failed' }> = files.map(f => ({ name: f.name, status: 'pending' as const }))
+        onUploadStateChange?.({ isUploading: true, files: [...fileStatuses] })
+
+        const successfulPaths: string[] = []
+
+        // Ensure the uploads folder is expanded in the sidebar
+        setExpandedFolders(prev => new Set([...prev, 'uploads']))
+
+        // Start reading all files into memory concurrently (parallel) for speed
+        const readFiles = await Promise.all(files.map(async (file, idx) => {
+            if (file.size > 30 * 1024 * 1024) {
+                fileStatuses[idx] = { name: file.name, status: 'failed' };
+                return { file, content: null, error: 'exceeds 30MB limit' };
+            }
+
+            fileStatuses[idx] = { name: file.name, status: 'reading' };
+            onUploadStateChange?.({ isUploading: true, files: [...fileStatuses] });
+
+            try {
+                let content: string;
+                if (isBinaryFile(file.name)) {
+                    content = await new Promise<string>((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result as string);
+                        reader.onerror = reject;
+                        reader.readAsDataURL(file);
+                    });
+                } else {
+                    content = await new Promise<string>((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result as string);
+                        reader.onerror = reject;
+                        reader.readAsText(file);
+                    });
+                }
+                return { file, content, error: null };
+            } catch (err) {
+                return { file, content: null, error: 'failed to read' };
+            }
+        }));
+
+        onUploadStateChange?.({ isUploading: true, files: [...fileStatuses] });
 
         try {
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i]
-                setUploadProgress({ current: i + 1, total: files.length })
+            // Sequential upload queue ("next by next" as requested)
+            for (let i = 0; i < readFiles.length; i++) {
+                const { file, content, error } = readFiles[i];
 
-                const targetPath = getTargetPath(file.name)
+                if (error) {
+                    fileStatuses[i] = { name: file.name, status: 'failed' };
+                    onUploadStateChange?.({ isUploading: true, files: [...fileStatuses] });
+                    if (error === 'exceeds 30MB limit') alert(`File ${file.name} exceeds 30MB limit.`);
+                    continue;
+                }
 
-                // Check if file already exists
-                let finalPath = targetPath
-                let counter = 1
-                const baseName = file.name.includes('.')
-                    ? file.name.substring(0, file.name.lastIndexOf('.'))
-                    : file.name
-                const ext = file.name.includes('.')
-                    ? file.name.substring(file.name.lastIndexOf('.'))
-                    : ''
+                if (!content) continue;
+
+                // Determine final path
+                const targetName = file.name;
+                let finalPath = `${basePath}/${targetName}`;
+                let counter = 1;
+                const baseName = targetName.includes('.') ? targetName.substring(0, targetName.lastIndexOf('.')) : targetName;
+                const ext = targetName.includes('.') ? targetName.substring(targetName.lastIndexOf('.')) : '';
 
                 while ((generatedFiles || {})[finalPath]) {
-                    const dir = targetPath.includes('/')
-                        ? targetPath.substring(0, targetPath.lastIndexOf('/'))
-                        : ''
-                    finalPath = dir
-                        ? `${dir}/${baseName}_${counter}${ext}`
-                        : `${baseName}_${counter}${ext}`
-                    counter++
+                    finalPath = `${basePath}/${baseName}_${counter}${ext}`;
+                    counter++;
                 }
 
-                if (isBinaryFile(file.name)) {
-                    // Handle binary files - convert to base64 data URL
-                    const content = await new Promise<string>((resolve, reject) => {
-                        const reader = new FileReader()
-                        reader.onload = () => resolve(reader.result as string)
-                        reader.onerror = reject
-                        reader.readAsDataURL(file)
-                    })
-                    addGeneratedFile(finalPath, content)
-                } else {
-                    // Handle text files
-                    const content = await new Promise<string>((resolve, reject) => {
-                        const reader = new FileReader()
-                        reader.onload = () => resolve(reader.result as string)
-                        reader.onerror = reject
-                        reader.readAsText(file)
-                    })
-                    addGeneratedFile(finalPath, content)
+                // Update status: uploading
+                fileStatuses[i] = { name: finalPath, status: 'uploading' };
+                onUploadStateChange?.({ isUploading: true, files: [...fileStatuses] });
+
+                try {
+                    await saveSingleProjectFile(projectId, userId, '', finalPath, content, _githubConnection);
+
+                    // Success — add to local state & mark as synced
+                    addGeneratedFile(finalPath, content);
+                    onFileSynced?.(finalPath, content);
+                    successfulPaths.push(finalPath);
+
+                    fileStatuses[i] = { name: finalPath, status: 'success' };
+                } catch (err) {
+                    addGeneratedFile(finalPath, content); // Fallback: add locally
+                    fileStatuses[i] = { name: finalPath, status: 'failed' };
                 }
 
-                console.log(`Added file: ${finalPath} (${file.size} bytes)`)
+                onUploadStateChange?.({ isUploading: true, files: [...fileStatuses] });
+            }
 
-                // Expand parent folders
-                const pathParts = finalPath.split('/')
-                if (pathParts.length > 1) {
-                    setExpandedFolders(prev => {
-                        const next = new Set(prev)
-                        let currentPath = ''
-                        for (let j = 0; j < pathParts.length - 1; j++) {
-                            currentPath = currentPath ? `${currentPath}/${pathParts[j]}` : pathParts[j]
-                            next.add(currentPath)
-                        }
-                        return next
-                    })
-                }
+            // Auto-select the first successfully uploaded file in the viewer
+            if (successfulPaths.length > 0) {
+                onSelectFile(successfulPaths[0], 'asset')
             }
 
             onFileCreated?.()
         } catch (error) {
             console.error('Error uploading files:', error)
-            alert('Failed to upload some files. Please try again.')
         } finally {
-            setIsUploading(false)
-            setUploadProgress(null)
+            // Keep the overlay visible briefly to show results
+            await new Promise(resolve => setTimeout(resolve, 1500))
+            onUploadStateChange?.(null)
         }
     }
 
@@ -186,46 +240,6 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
 
     // Use the exported buildFileTree function
     const fileTree = buildFileTree(visibleFiles, images, currentModel ? [currentModel] : [], [], [])
-
-    // Get target folder path based on file type and current selection
-    const getTargetPath = (fileName: string): string => {
-        const fileType = getFileType(fileName)
-        let basePath = ''
-
-        // If a file/folder is selected, use that as context
-        if (selectedFile) {
-            const isFolder = fileTree.some(node =>
-                node.path === selectedFile && node.type === 'folder'
-            ) || expandedFolders.has(selectedFile)
-
-            if (isFolder) {
-                basePath = selectedFile
-            } else if (selectedFile.includes('/')) {
-                basePath = selectedFile.substring(0, selectedFile.lastIndexOf('/'))
-            }
-        }
-
-        // For binary assets, organize into type subfolders
-        if (isBinaryFile(fileName)) {
-            // Map file types to standard project subfolders
-            const folderMap: Record<string, string> = {
-                image: 'assets/images',
-                model: 'assets/models',
-                video: 'assets/videos',
-                audio: 'assets/audio',
-            }
-            const assetFolder = folderMap[fileType] || 'assets'
-
-            // If we're already in an appropriate subfolder, use the selected path
-            if (basePath === assetFolder || basePath.startsWith(assetFolder + '/')) {
-                return `${basePath}/${fileName}`
-            }
-            return `${assetFolder}/${fileName}`
-        }
-
-        // For code/text files, place in current context or root
-        return basePath ? `${basePath}/${fileName}` : fileName
-    }
 
     const toggleFolder = (path: string) => {
         setExpandedFolders((prev) => {
@@ -286,10 +300,21 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
             return
         }
 
-        addGeneratedFile(filePath, newFileContent || '')
+        const content = newFileContent || ''
+        addGeneratedFile(filePath, content)
 
         if (basePath) {
             setExpandedFolders(prev => new Set([...prev, basePath]))
+        }
+
+        // Persist to backend immediately (fire-and-forget)
+        if (projectId && userId) {
+            saveSingleProjectFile(projectId, userId, '', filePath, content, _githubConnection)
+                .then(() => {
+                    onFileSynced?.(filePath, content)
+                    console.log(`✓ Created file persisted: ${filePath}`)
+                })
+                .catch(e => console.warn(`Failed to persist new file ${filePath}:`, e))
         }
 
         setNewFileName("")
@@ -336,6 +361,16 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
             return next
         })
 
+        // Persist folder marker to backend immediately
+        if (projectId && userId) {
+            saveSingleProjectFile(projectId, userId, '', indexFilePath, '', _githubConnection)
+                .then(() => {
+                    onFileSynced?.(indexFilePath, '')
+                    console.log(`✓ Created folder persisted: ${folderPath}`)
+                })
+                .catch(e => console.warn(`Failed to persist new folder ${folderPath}:`, e))
+        }
+
         setNewFolderName("")
         setShowNewFolderDialog(false)
         onFileCreated?.()
@@ -348,23 +383,49 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
         // Don't allow renaming settings file
         if (isSettingsFile(selectedFile)) return
 
-        const content = generatedFiles[selectedFile]
-        if (content === undefined) return
+        // Check if selected item is a folder
+        const isFolder = !generatedFiles[selectedFile] && Object.keys(generatedFiles).some(p => p.startsWith(selectedFile + '/'))
 
-        // Get the directory path
-        const lastSlashIndex = selectedFile.lastIndexOf('/')
-        const dirPath = lastSlashIndex > 0 ? selectedFile.substring(0, lastSlashIndex) : ''
-        const newPath = dirPath ? `${dirPath}/${renameValue.trim()}` : renameValue.trim()
+        if (isFolder) {
+            // Rename folder: move all children under new prefix
+            const lastSlash = selectedFile.lastIndexOf('/')
+            const parentDir = lastSlash > 0 ? selectedFile.substring(0, lastSlash) : ''
+            const newFolderPath = parentDir ? `${parentDir}/${renameValue.trim()}` : renameValue.trim()
 
-        if (generatedFiles[newPath] !== undefined) {
-            alert(`A file with name "${renameValue.trim()}" already exists!`)
-            return
-        }
+            const updatedFiles = { ...generatedFiles }
+            const prefix = selectedFile + '/'
 
-        try {
-            // For rename: delete old file from DB/GitHub (if exists), the new file will be saved on next auto-save
-            if (projectId && userId) {
-                await deleteProjectFile(projectId, userId, selectedFile, _githubConnection)
+            for (const oldPath of Object.keys(updatedFiles)) {
+                if (oldPath.startsWith(prefix)) {
+                    const newPath = newFolderPath + '/' + oldPath.substring(prefix.length)
+                    const content = updatedFiles[oldPath]
+                    delete updatedFiles[oldPath]
+                    updatedFiles[newPath] = content
+
+                    if (projectId && userId) {
+                        deleteProjectFile(projectId, userId, oldPath, _githubConnection).catch(() => {})
+                        saveSingleProjectFile(projectId, userId, '', newPath, content, _githubConnection)
+                            .then(() => onFileSynced?.(newPath, content))
+                            .catch(() => {})
+                        onFileSynced?.(oldPath, null)
+                    }
+                }
+            }
+
+            setGeneratedFiles(updatedFiles)
+            onSelectFile(newFolderPath, "file")
+        } else {
+            // Rename single file
+            const content = generatedFiles[selectedFile]
+            if (content === undefined) return
+
+            const lastSlashIndex = selectedFile.lastIndexOf('/')
+            const dirPath = lastSlashIndex > 0 ? selectedFile.substring(0, lastSlashIndex) : ''
+            const newPath = dirPath ? `${dirPath}/${renameValue.trim()}` : renameValue.trim()
+
+            if (generatedFiles[newPath] !== undefined) {
+                alert(`A file with name "${renameValue.trim()}" already exists!`)
+                return
             }
 
             // Update local state: remove old, add new
@@ -373,16 +434,22 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
             updatedFiles[newPath] = content
             setGeneratedFiles(updatedFiles)
 
-            // Select the renamed file
             onSelectFile(newPath, "asset", { path: newPath, content, type: 'code' })
 
-            setShowRenameDialog(false)
-            setRenameValue("")
-            onFileCreated?.()
-        } catch (error) {
-            console.error('Error renaming file:', error)
-            alert('Failed to rename file. Please try again.')
+            // Persist rename to backend
+            if (projectId && userId) {
+                deleteProjectFile(projectId, userId, selectedFile, _githubConnection)
+                    .then(() => onFileSynced?.(selectedFile, null))
+                    .catch(() => {})
+                saveSingleProjectFile(projectId, userId, '', newPath, content, _githubConnection)
+                    .then(() => onFileSynced?.(newPath, content))
+                    .catch(e => console.warn('Failed to persist renamed file:', e))
+            }
         }
+
+        setShowRenameDialog(false)
+        setRenameValue("")
+        onFileCreated?.()
     }
 
     const handleDelete = async () => {
@@ -391,50 +458,90 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
         // Don't allow deleting settings file
         if (isSettingsFile(selectedFile)) return
 
-        if (!confirm(`Are you sure you want to delete "${selectedFile}"?`)) return
+        // Check if selected item is a folder
+        const isFolder = !generatedFiles[selectedFile] && Object.keys(generatedFiles).some(p => p.startsWith(selectedFile + '/'))
+        const label = isFolder ? `folder "${selectedFile}" and all its contents` : `"${selectedFile}"`
 
-        try {
-            // Delete from database directly (and GitHub if code file)
-            if (projectId && userId) {
-                try {
-                    await deleteProjectFile(projectId, userId, selectedFile, _githubConnection)
-                } catch (e) {
-                    console.warn('Deletion failed, but continuing with local removal:', e)
+        if (!confirm(`Are you sure you want to delete ${label}?`)) return
+
+        const updatedFiles = { ...generatedFiles }
+
+        if (isFolder) {
+            // Delete all files under this folder
+            const prefix = selectedFile + '/'
+            for (const path of Object.keys(updatedFiles)) {
+                if (path.startsWith(prefix)) {
+                    delete updatedFiles[path]
+                    // Backend delete (fire-and-forget)
+                    if (projectId && userId) {
+                        deleteProjectFile(projectId, userId, path, _githubConnection)
+                            .then(() => console.log(`Background delete completed: ${path}`))
+                            .catch(e => console.warn(`Background delete failed for ${path}:`, e))
+                        onFileSynced?.(path, null)
+                    }
                 }
             }
-
-            // Remove from local state
-            const updatedFiles = { ...generatedFiles }
+        } else {
+            // Delete single file
             delete updatedFiles[selectedFile]
-            setGeneratedFiles(updatedFiles)
-
-            // Clear selection
-            onSelectFile("", "file")
-            setShowSettingsMenu(false)
-            onFileCreated?.()
-        } catch (error) {
-            console.error('Error deleting file:', error)
-            alert('Failed to delete file. Please try again.')
+            if (projectId && userId) {
+                deleteProjectFile(projectId, userId, selectedFile, _githubConnection)
+                    .then(() => console.log(`Background delete completed: ${selectedFile}`))
+                    .catch(e => console.warn(`Background delete failed for ${selectedFile}:`, e))
+                onFileSynced?.(selectedFile, null)
+            }
         }
+
+        setGeneratedFiles(updatedFiles)
+
+        // Clear selection immediately
+        onSelectFile("", "file")
+        setShowSettingsMenu(false)
+        onFileCreated?.()
     }
 
     const handleCopy = () => {
         if (!selectedFile) return
 
-        const content = generatedFiles[selectedFile]
-        if (content === undefined) return
+        // Check if it's a folder
+        const isFolder = !generatedFiles[selectedFile] && Object.keys(generatedFiles).some(p => p.startsWith(selectedFile + '/'))
 
-        setClipboard({ path: selectedFile, content, operation: "copy" })
+        if (isFolder) {
+            // Collect all files under this folder
+            const prefix = selectedFile + '/'
+            const folderContent = JSON.stringify(
+                Object.entries(generatedFiles)
+                    .filter(([p]) => p.startsWith(prefix))
+                    .map(([p, c]) => ({ relativePath: p.substring(prefix.length), content: c }))
+            )
+            setClipboard({ path: selectedFile, content: folderContent, operation: "copy" })
+        } else {
+            const content = generatedFiles[selectedFile]
+            if (content === undefined) return
+            setClipboard({ path: selectedFile, content, operation: "copy" })
+        }
         setShowSettingsMenu(false)
     }
 
     const handleCut = () => {
         if (!selectedFile) return
 
-        const content = generatedFiles[selectedFile]
-        if (content === undefined) return
+        // Check if it's a folder
+        const isFolder = !generatedFiles[selectedFile] && Object.keys(generatedFiles).some(p => p.startsWith(selectedFile + '/'))
 
-        setClipboard({ path: selectedFile, content, operation: "cut" })
+        if (isFolder) {
+            const prefix = selectedFile + '/'
+            const folderContent = JSON.stringify(
+                Object.entries(generatedFiles)
+                    .filter(([p]) => p.startsWith(prefix))
+                    .map(([p, c]) => ({ relativePath: p.substring(prefix.length), content: c }))
+            )
+            setClipboard({ path: selectedFile, content: folderContent, operation: "cut" })
+        } else {
+            const content = generatedFiles[selectedFile]
+            if (content === undefined) return
+            setClipboard({ path: selectedFile, content, operation: "cut" })
+        }
         setShowSettingsMenu(false)
     }
 
@@ -455,27 +562,87 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
             }
         }
 
-        const fileName = clipboard.path.split('/').pop() || 'pasted_file'
-        let newPath = destFolder ? `${destFolder}/${fileName}` : fileName
-
-        // Handle name conflicts
-        let counter = 1
-        const baseName = fileName.includes('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName
-        const ext = fileName.includes('.') ? fileName.substring(fileName.lastIndexOf('.')) : ''
-        while (generatedFiles[newPath] !== undefined) {
-            newPath = destFolder
-                ? `${destFolder}/${baseName}_copy${counter}${ext}`
-                : `${baseName}_copy${counter}${ext}`
-            counter++
-        }
+        // Check if clipboard contains a folder (JSON array of files)
+        let isFolderPaste = false
+        let folderFiles: Array<{relativePath: string, content: string}> = []
+        try {
+            const parsed = JSON.parse(clipboard.content)
+            if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].relativePath !== undefined) {
+                isFolderPaste = true
+                folderFiles = parsed
+            }
+        } catch { /* not JSON, it's a single file */ }
 
         const updatedFiles = { ...generatedFiles }
-        updatedFiles[newPath] = clipboard.content
 
-        // If it was a cut operation, delete the original
-        if (clipboard.operation === "cut") {
-            delete updatedFiles[clipboard.path]
-            setClipboard(null)
+        if (isFolderPaste) {
+            const folderName = clipboard.path.split('/').pop() || 'folder'
+            let newFolderPath = destFolder ? `${destFolder}/${folderName}` : folderName
+            // Avoid conflicts
+            let counter = 1
+            while (Object.keys(updatedFiles).some(p => p.startsWith(newFolderPath + '/'))) {
+                newFolderPath = destFolder
+                    ? `${destFolder}/${folderName}_copy${counter}`
+                    : `${folderName}_copy${counter}`
+                counter++
+            }
+            for (const { relativePath, content } of folderFiles) {
+                const newPath = `${newFolderPath}/${relativePath}`
+                updatedFiles[newPath] = content
+                if (projectId && userId) {
+                    saveSingleProjectFile(projectId, userId, '', newPath, content, _githubConnection)
+                        .then(() => onFileSynced?.(newPath, content))
+                        .catch(() => {})
+                }
+            }
+            // If cut, delete originals
+            if (clipboard.operation === "cut") {
+                const prefix = clipboard.path + '/'
+                for (const p of Object.keys(updatedFiles)) {
+                    if (p.startsWith(prefix) && !p.startsWith(newFolderPath + '/')) {
+                        delete updatedFiles[p]
+                        if (projectId && userId) {
+                            deleteProjectFile(projectId, userId, p, _githubConnection).catch(() => {})
+                            onFileSynced?.(p, null)
+                        }
+                    }
+                }
+                setClipboard(null)
+            }
+        } else {
+            // Single file paste
+            const fileName = clipboard.path.split('/').pop() || 'pasted_file'
+            let newPath = destFolder ? `${destFolder}/${fileName}` : fileName
+
+            // Handle name conflicts
+            let counter = 1
+            const baseName = fileName.includes('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName
+            const ext = fileName.includes('.') ? fileName.substring(fileName.lastIndexOf('.')) : ''
+            while (updatedFiles[newPath] !== undefined) {
+                newPath = destFolder
+                    ? `${destFolder}/${baseName}_copy${counter}${ext}`
+                    : `${baseName}_copy${counter}${ext}`
+                counter++
+            }
+
+            updatedFiles[newPath] = clipboard.content
+
+            // Persist pasted file immediately
+            if (projectId && userId) {
+                saveSingleProjectFile(projectId, userId, '', newPath, clipboard.content, _githubConnection)
+                    .then(() => onFileSynced?.(newPath, clipboard.content))
+                    .catch(e => console.warn('Failed to persist pasted file:', e))
+            }
+
+            // If it was a cut operation, delete the original
+            if (clipboard.operation === "cut") {
+                delete updatedFiles[clipboard.path]
+                if (projectId && userId) {
+                    deleteProjectFile(projectId, userId, clipboard.path, _githubConnection).catch(() => {})
+                    onFileSynced?.(clipboard.path, null)
+                }
+                setClipboard(null)
+            }
         }
 
         setGeneratedFiles(updatedFiles)
@@ -485,8 +652,9 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
 
     const openRenameDialog = () => {
         if (!selectedFile) return
-        const fileName = selectedFile.split('/').pop() || ''
-        setRenameValue(fileName)
+        // For folders, get just the folder name
+        const name = selectedFile.split('/').pop() || ''
+        setRenameValue(name)
         setShowRenameDialog(true)
         setShowSettingsMenu(false)
     }
@@ -512,22 +680,26 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                     <div
                         className={cn(
                             "flex items-center gap-1.5 px-2 py-1.5 cursor-pointer hover:bg-muted font-mono text-xs rounded transition-colors",
+                            isSelected && "bg-foreground text-background hover:bg-foreground/90",
                             level > 0 && "ml-4"
                         )}
                         style={{ paddingLeft: `${8 + level * 16}px` }}
-                        onClick={() => toggleFolder(node.path)}
+                        onClick={() => {
+                            toggleFolder(node.path)
+                            onSelectFile(node.path, "file")
+                        }}
                     >
                         {isExpanded ? (
-                            <ChevronDown className="h-3 w-3 text-foreground shrink-0" />
+                            <ChevronDown className={cn("h-3 w-3 shrink-0", isSelected ? "text-background" : "text-foreground")} />
                         ) : (
-                            <ChevronRight className="h-3 w-3 text-foreground shrink-0" />
+                            <ChevronRight className={cn("h-3 w-3 shrink-0", isSelected ? "text-background" : "text-foreground")} />
                         )}
                         {isExpanded ? (
-                            <FolderOpen className="h-4 w-4 text-foreground shrink-0" />
+                            <FolderOpen className={cn("h-4 w-4 shrink-0", isSelected ? "text-background" : "text-foreground")} />
                         ) : (
-                            <Folder className="h-4 w-4 text-foreground shrink-0" />
+                            <Folder className={cn("h-4 w-4 shrink-0", isSelected ? "text-background" : "text-foreground")} />
                         )}
-                        <span className="text-foreground font-medium truncate" title={node.name}>
+                        <span className={cn("font-medium truncate", isSelected ? "text-background font-bold" : "text-foreground")} title={node.name}>
                             {formatName(node.name, false)}
                         </span>
                     </div>
@@ -575,26 +747,43 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
             </div>
 
             {/* Creation Buttons */}
-            <div className="p-3 border-b-2 border-border flex gap-2 bg-background items-center">
+            <div className="p-3 border-b-2 border-border flex gap-1.5 bg-background items-center">
+                <input 
+                    type="file" 
+                    multiple 
+                    className="hidden" 
+                    ref={fileInputRef} 
+                    onChange={handleFileInput} 
+                />
                 <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setShowNewFileDialog(true)}
-                    className="flex-1 border-2 border-border hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-xs font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
+                    className="flex-1 px-1 border-2 border-border hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-[10px] font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
                     title="New File"
                 >
-                    <File className="h-3.5 w-3.5 mr-1.5" />
+                    <File className="h-3 w-3 mr-1" />
                     FILE
                 </Button>
                 <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setShowNewFolderDialog(true)}
-                    className="flex-1 border-2 border-border hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-xs font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
+                    className="flex-1 px-1 border-2 border-border hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-[10px] font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
                     title="New Folder"
                 >
-                    <Folder className="h-3.5 w-3.5 mr-1.5" />
+                    <Folder className="h-3 w-3 mr-1" />
                     FOLDER
+                </Button>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex-1 px-1 border-2 border-border hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-[10px] font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
+                    title="Upload File"
+                >
+                    <Upload className="h-3 w-3 mr-1" />
+                    UPLOAD
                 </Button>
 
                 {/* Settings Menu Button */}
@@ -611,11 +800,17 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                     </button>
 
                     {/* Settings Dropdown Menu */}
-                    {showSettingsMenu && (
+                    {showSettingsMenu && (() => {
+                        // A selected item is valid if it's a file OR a folder (has children)
+                        const isValidSelection = selectedFile && (
+                            generatedFiles[selectedFile] !== undefined ||
+                            Object.keys(generatedFiles).some(p => p.startsWith(selectedFile + '/'))
+                        )
+                        return (
                         <div className="absolute right-0 top-full mt-1 w-40 bg-background border-2 border-border shadow-[4px_4px_0px_0px_currentColor] z-50">
                             <button
                                 onClick={openRenameDialog}
-                                disabled={!selectedFile || !generatedFiles[selectedFile]}
+                                disabled={!isValidSelection}
                                 className="w-full px-3 py-2 text-left text-xs text-foreground font-mono font-bold flex items-center gap-2 hover:bg-foreground hover:text-background disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-background disabled:hover:text-foreground"
                             >
                                 <Pencil className="h-3 w-3" />
@@ -623,7 +818,7 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                             </button>
                             <button
                                 onClick={handleDelete}
-                                disabled={!selectedFile || !generatedFiles[selectedFile]}
+                                disabled={!isValidSelection}
                                 className="w-full px-3 py-2 text-left text-xs text-foreground font-mono font-bold flex items-center gap-2 hover:bg-foreground hover:text-background disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-background disabled:hover:text-foreground"
                             >
                                 <Trash2 className="h-3 w-3" />
@@ -632,7 +827,7 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                             <div className="border-t border-border" />
                             <button
                                 onClick={handleCut}
-                                disabled={!selectedFile || !generatedFiles[selectedFile]}
+                                disabled={!isValidSelection}
                                 className="w-full px-3 py-2 text-left text-xs text-foreground font-mono font-bold flex items-center gap-2 hover:bg-foreground hover:text-background disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-background disabled:hover:text-foreground"
                             >
                                 <Scissors className="h-3 w-3" />
@@ -640,7 +835,7 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                             </button>
                             <button
                                 onClick={handleCopy}
-                                disabled={!selectedFile || !generatedFiles[selectedFile]}
+                                disabled={!isValidSelection}
                                 className="w-full px-3 py-2 text-left text-xs text-foreground font-mono font-bold flex items-center gap-2 hover:bg-foreground hover:text-background disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-background disabled:hover:text-foreground"
                             >
                                 <ClipboardCopy className="h-3 w-3" />
@@ -660,7 +855,8 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                                 )}
                             </button>
                         </div>
-                    )}
+                        )
+                    })()}
                 </div>
             </div>
 
@@ -687,23 +883,7 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                     </div>
                 )}
 
-                {/* Upload Progress */}
-                {isUploading && uploadProgress && (
-                    <div className="absolute top-2 left-2 right-2 z-20 bg-white border-2 border-black shadow-lg p-3 rounded">
-                        <div className="flex items-center gap-2">
-                            <div className="animate-spin h-4 w-4 border-2 border-black border-t-transparent rounded-full" />
-                            <span className="text-xs font-mono font-bold text-black">
-                                Uploading {uploadProgress.current}/{uploadProgress.total}...
-                            </span>
-                        </div>
-                        <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                            <div
-                                className="h-full bg-black transition-all duration-300"
-                                style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
-                            />
-                        </div>
-                    </div>
-                )}
+                {/* Upload progress is now shown in the Builder viewer overlay */}
 
                 {fileTree.length === 0 ? (
                     <div className="px-4 py-8 text-center text-black/50 text-xs font-mono">

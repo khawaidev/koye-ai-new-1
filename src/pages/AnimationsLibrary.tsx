@@ -1,10 +1,8 @@
 import { useMemo, useState } from "react"
-import { useNavigate } from "react-router-dom"
+
 import animationsSource from "../../animations.md?raw"
-import { Button } from "../components/ui/button"
 import { Input } from "../components/ui/input"
 import { Select } from "../components/ui/select"
-import { ThemeToggle } from "../components/ui/theme-toggle"
 
 type AnimationInfo = {
   id: number
@@ -69,7 +67,6 @@ const animationsData = parseAnimations().map((animation) => ({
 }))
 
 export function AnimationsLibrary() {
-  const navigate = useNavigate()
   const [searchTerm, setSearchTerm] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("all")
 
@@ -90,25 +87,6 @@ export function AnimationsLibrary() {
 
   return (
     <div className="flex h-screen flex-col bg-background overflow-hidden font-mono">
-      {/* Terminal Header */}
-      <header className="shrink-0 border-b border-border bg-background">
-        <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs text-muted-foreground">$ koye_ai / libraries</p>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">Animations Library</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <ThemeToggle />
-            <Button
-              onClick={() => navigate(-1)}
-              className="bg-background text-foreground border-2 border-foreground shadow-[4px_4px_0px_0px_currentColor] hover:shadow-[2px_2px_0px_0px_currentColor] hover:translate-x-[2px] hover:translate-y-[2px] transition-all rounded-none font-bold"
-            >
-              $ back
-            </Button>
-          </div>
-        </div>
-      </header>
-
       <main className="flex-1 overflow-hidden bg-background">
         <div
           className="mx-auto max-w-6xl h-full overflow-y-auto px-6 py-6 space-y-6"

@@ -11,6 +11,7 @@ import { ImageGenerationCards } from "./ImageGenerationCards"
 import { VideoPlayer } from "./VideoPlayer"
 import { ChatAvatar } from "./VoiceChatLayout"
 import { WebSearchResults } from "./WebSearchResults"
+import { SquareLoader } from "../ui/SquareLoader"
 
 interface ResponseMessageProps {
   content: string
@@ -92,8 +93,8 @@ export function ResponseMessage({
       <div className="flex max-w-[85%] flex-col gap-3">
         {/* Loading Indicator for Image Generation - Replaces content when loading */}
         {isLoadingImages ? (
-          <div className="flex items-center gap-3 py-4 px-2">
-            <div className="h-5 w-5 border-2 border-foreground border-t-transparent rounded-full animate-spin" />
+          <div className="flex items-center gap-1 py-4 px-2">
+            <SquareLoader />
             <span className="font-medium text-[15px] text-foreground">
               {loadingPhrases[currentPhraseIndex]}
             </span>
@@ -108,8 +109,8 @@ export function ResponseMessage({
               )}
             >
               {showThinking ? (
-                <div className="flex items-center gap-3">
-                  <div className="h-4 w-4 border-2 border-foreground border-t-transparent rounded-full animate-spin" />
+                <div className="flex items-center gap-1 min-h-[44px]">
+                  <SquareLoader />
                   <ShimmeringText
                     text={thinking || "Thinking..."}
                     duration={2}
@@ -125,9 +126,9 @@ export function ResponseMessage({
 
             {/* Web Search Loading Indicator */}
             {isWebSearching && (
-              <div className="flex items-center gap-3 py-3 px-2">
-                <div className="h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1 py-3 px-2">
+                <SquareLoader />
+                <div className="flex items-center gap-1.5 ml-1">
                   <Globe className="h-4 w-4 text-blue-500" />
                   <span className="font-medium text-sm text-foreground">Searching the web...</span>
                 </div>

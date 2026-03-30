@@ -1,4 +1,5 @@
 import { File, FileCode, Music } from "lucide-react"
+import { useEffect } from "react"
 import { useAppStore } from "../../store/useAppStore"
 import { detectFileType } from "../../utils/fileTypeDetection"
 import { ImageViewer } from "../image-viewer/ImageViewer"
@@ -10,11 +11,52 @@ export function UnifiedViewer() {
     const images = useAppStore((state) => state.images)
     const generatedFiles = useAppStore((state) => state.generatedFiles)
 
+    // Debugging system for tracking asset loading
+    useEffect(() => {
+        if (selectedAsset) {
+            const assetPath = (selectedAsset as any).path
+            const assetType = (selectedAsset as any).type
+            const hasContent = !!(selectedAsset as any).content
+            const hasUrl = !!(selectedAsset as any).url
+            
+            console.group(`[UnifiedViewer] Loading Asset: ${assetPath || 'Unknown'}`)
+            console.log("Type:", assetType)
+            console.log("Full Object:", selectedAsset)
+            console.log("Status:", { hasContent, hasUrl })
+            
+            if (hasUrl) console.log("URL Source:", (selectedAsset as any).url)
+            else if (hasContent && String((selectedAsset as any).content).startsWith('http')) {
+                console.log("URL extracted from content:", (selectedAsset as any).content)
+            }
+            console.groupEnd()
+        }
+    }, [selectedAsset])
+
     if (!selectedAsset) {
         return (
             <div className="flex h-full flex-col items-center justify-center bg-muted/20 text-muted-foreground font-mono">
                 <FileCode className="h-16 w-16 mb-4 opacity-20" />
                 <p className="text-sm">Select a file to view</p>
+            </div>
+        )
+    }
+
+    // Handle Folder selection
+    if ((selectedAsset as any).type === 'folder') {
+        const path = (selectedAsset as any).path
+        const name = (selectedAsset as any).name || path.split('/').pop() || 'Folder'
+        return (
+            <div className="flex h-full flex-col items-center justify-center bg-muted/20 text-muted-foreground font-mono p-8">
+                <div className="p-6 rounded-full bg-border/30 mb-6">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-40">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                </div>
+                <h3 className="text-lg font-bold text-foreground mb-2">{name}</h3>
+                <p className="text-xs opacity-60 max-w-xs text-center break-all">{path}</p>
+                <div className="mt-8 px-4 py-2 border border-border bg-background/50 rounded text-xs">
+                    Directory Node
+                </div>
             </div>
         )
     }
@@ -51,9 +93,12 @@ export function UnifiedViewer() {
         ('view' in selectedAsset && 'url' in selectedAsset) ||
         (fileType && fileType.category === 'image')
     ) {
-        // First check if selectedAsset.data has URL (from FileSystemSidebar)
-        const dataUrl = (selectedAsset as any).data?.url || (selectedAsset as any).url
-        if (dataUrl && (dataUrl.startsWith('data:image/') || dataUrl.startsWith('http') || dataUrl.startsWith('blob:'))) {
+        // First check if selectedAsset.data has URL (from FileSystemSidebar) or the content itself is a URL
+        const dataUrl = (selectedAsset as any).data?.url || (selectedAsset as any).url || 
+            (typeof (selectedAsset as any).content === 'string' && (selectedAsset as any).content.startsWith('http') ? (selectedAsset as any).content : null)
+            
+        if (dataUrl && (dataUrl.startsWith('data:') || dataUrl.startsWith('http') || dataUrl.startsWith('blob:'))) {
+            console.log(`[UnifiedViewer] Rendering IMAGE from resolved URL: ${dataUrl}`)
             return (
                 <div className="flex h-full items-center justify-center bg-muted/20 p-4">
                     <img
@@ -69,7 +114,7 @@ export function UnifiedViewer() {
         if (fileType && fileType.category === 'image' && assetPath && generatedFiles[assetPath]) {
             const imageContent = generatedFiles[assetPath]
             // Direct URL or data URL
-            if (imageContent.startsWith('data:image/') || imageContent.startsWith('http') || imageContent.startsWith('blob:')) {
+            if (imageContent.startsWith('data:') || imageContent.startsWith('http') || imageContent.startsWith('blob:')) {
                 return (
                     <div className="flex h-full items-center justify-center bg-muted/20 p-4">
                         <img
@@ -125,7 +170,8 @@ export function UnifiedViewer() {
         }
 
         // If it's an actual model file (.glb, .fbx etc), try to get URL from generatedFiles
-        let modelUrl = (selectedAsset as any).url || (selectedAsset as any).data?.url
+        let modelUrl = (selectedAsset as any).url || (selectedAsset as any).data?.url || 
+            (typeof (selectedAsset as any).content === 'string' && (selectedAsset as any).content.startsWith('http') ? (selectedAsset as any).content : null)
 
         if (!modelUrl && assetPath && generatedFiles[assetPath]) {
             const modelContent = generatedFiles[assetPath]
@@ -155,11 +201,17 @@ export function UnifiedViewer() {
         (selectedAsset as any).type === 'video' ||
         (fileType && fileType.category === 'video')
     ) {
-        const fileContent = assetPath ? generatedFiles[assetPath] : null;
-        const videoUrl = (selectedAsset as any).url ||
-            (fileContent && (fileContent.startsWith('http') || fileContent.startsWith('blob:') || fileContent.startsWith('data:')) ? fileContent : null)
+        const fileContent = (selectedAsset as any).content || (assetPath ? generatedFiles[assetPath] : null);
+        let videoUrl = (selectedAsset as any).url ||
+            (fileContent && typeof fileContent === 'string' && (fileContent.startsWith('http') || fileContent.startsWith('blob:') || fileContent.startsWith('data:')) ? fileContent : null)
+
+        // Try to extract URL from markdown reference content
+        if (!videoUrl && fileContent) {
+            videoUrl = extractUrlFromContent(fileContent)
+        }
 
         if (videoUrl) {
+            console.log(`[UnifiedViewer] Rendering VIDEO from resolved URL: ${videoUrl}`)
             return (
                 <div className="flex h-full items-center justify-center bg-background">
                     <video
@@ -177,11 +229,17 @@ export function UnifiedViewer() {
         (selectedAsset as any).type === 'audio' ||
         (fileType && fileType.category === 'audio')
     ) {
-        const fileContent = assetPath ? generatedFiles[assetPath] : null;
-        const audioUrl = (selectedAsset as any).url ||
-            (fileContent && (fileContent.startsWith('http') || fileContent.startsWith('blob:') || fileContent.startsWith('data:')) ? fileContent : null)
+        const fileContent = (selectedAsset as any).content || (assetPath ? generatedFiles[assetPath] : null);
+        let audioUrl = (selectedAsset as any).url ||
+            (fileContent && typeof fileContent === 'string' && (fileContent.startsWith('http') || fileContent.startsWith('blob:') || fileContent.startsWith('data:')) ? fileContent : null)
+
+        // Try to extract URL from markdown reference content
+        if (!audioUrl && fileContent) {
+            audioUrl = extractUrlFromContent(fileContent)
+        }
 
         if (audioUrl) {
+            console.log(`[UnifiedViewer] Rendering AUDIO from resolved URL: ${audioUrl}`)
             return (
                 <div className="flex h-full flex-col items-center justify-center bg-background text-foreground p-8">
                     <Music className="h-24 w-24 mb-8 text-green-500" />

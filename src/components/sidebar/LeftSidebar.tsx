@@ -1,6 +1,6 @@
-import { Bone, Box, File, Folder, Image, MessageSquare, Music, Pen, Plus, Trash2, User, Video, X } from "lucide-react"
+import { Bone, Box, File, Folder, Image, MessageSquare, Music, Pen, Plus, Sparkles, Trash2, User, Video, X } from "lucide-react"
 import React, { useEffect, useState } from "react"
-import { useNavigate } from "react-router-dom"
+
 import appIconLight from "../../assets/icon.jpg"
 import appIconDark from "../../assets/icon.png"
 import { cn } from "../../lib/utils"
@@ -12,7 +12,7 @@ import { Button } from "../ui/button"
 import { ThemeToggle } from "../ui/theme-toggle"
 import { FileSystemSidebar } from "./FileSystemSidebar"
 
-type WorkflowStage = "chat" | "images" | "model" | "texture" | "rig" | "animate" | "audio" | "export" | "build" | "imageGeneration" | "videoGeneration" | "audioGeneration" | "model3DGeneration" | "sprites"
+type WorkflowStage = "chat" | "images" | "model" | "texture" | "rig" | "animate" | "audio" | "export" | "build" | "imageGeneration" | "videoGeneration" | "mediaGeneration" | "audioGeneration" | "model3DGeneration" | "sprites" | "dashboard" | "animations"
 
 interface LeftSidebarProps {
   isOpen: boolean
@@ -24,15 +24,15 @@ interface LeftSidebarProps {
 // Navigation items for the icon sidebar
 const navItems = [
   { id: "chat" as WorkflowStage, icon: MessageSquare, label: "Chat" },
-  { id: "imageGeneration" as WorkflowStage, icon: Image, label: "Image Gen" },
-  { id: "videoGeneration" as WorkflowStage, icon: Video, label: "Video Gen" },
+  { id: "mediaGeneration" as WorkflowStage, icon: Sparkles, label: "Create" },
   { id: "audioGeneration" as WorkflowStage, icon: Music, label: "Audio Gen" },
   { id: "model3DGeneration" as WorkflowStage, icon: Box, label: "3D Model" },
+  { id: "animations" as WorkflowStage, icon: Bone, label: "Animations" },
 ]
 
 export function LeftSidebar({ isOpen, stage, setStage, onToggleSidebar }: LeftSidebarProps) {
   const { theme } = useTheme()
-  const navigate = useNavigate()
+
   const {
     sessions,
     currentSessionId,
@@ -83,7 +83,19 @@ export function LeftSidebar({ isOpen, stage, setStage, onToggleSidebar }: LeftSi
   }
 
   const handleNewChat = () => {
-    createNewSession()
+    // Preserve the current project connection for the new session
+    const projectToKeep = currentProject
+    const newSessionId = createNewSession()
+
+    // If a project was connected, re-link it to the new session
+    if (projectToKeep && newSessionId) {
+      // Restore the project in the store (createNewSession doesn't clear it, but just in case)
+      setCurrentProject(projectToKeep)
+      // Persist the project-session link in localStorage so it survives reloads
+      localStorage.setItem(`project_${newSessionId}`, JSON.stringify(projectToKeep))
+      localStorage.setItem(`chat_project_sync_${newSessionId}`, projectToKeep.id)
+    }
+
     if (setStage) setStage("chat")
   }
 
@@ -226,24 +238,13 @@ export function LeftSidebar({ isOpen, stage, setStage, onToggleSidebar }: LeftSi
           )
         })}
 
-        {/* Animation Library */}
-        <button
-          onClick={() => {
-            navigate("/animations")
-          }}
-          className={cn(
-            "flex items-center justify-center w-9 h-9 rounded-lg transition-colors",
-            "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-          )}
-          title="Animation Library"
-        >
-          <Bone className="h-[18px] w-[18px]" />
-        </button>
+
 
         {/* Connected Project */}
         {currentProject && (
           <div className="relative group flex justify-center w-full mt-2">
             <button
+              onClick={() => setStage?.("build")}
               className="flex items-center justify-center w-9 h-9 rounded-lg bg-foreground/10 text-foreground transition-colors hover:bg-foreground/20"
               title={currentProject.name}
             >
@@ -267,8 +268,13 @@ export function LeftSidebar({ isOpen, stage, setStage, onToggleSidebar }: LeftSi
 
         {/* User Profile / Dashboard Link */}
         <button
-          onClick={() => navigate("/dashboard")}
-          className="flex items-center justify-center w-9 h-9 rounded-full hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground mb-2 shadow-sm border border-border/50"
+          onClick={() => setStage?.("dashboard")}
+          className={cn(
+            "flex items-center justify-center w-9 h-9 rounded-full shadow-sm border mb-2 transition-colors",
+            stage === "dashboard"
+              ? "bg-foreground text-white border-foreground dark:text-black"
+              : "border-border/50 bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+          )}
           title="Dashboard"
         >
           <User className="h-[18px] w-[18px]" />
@@ -290,9 +296,9 @@ export function LeftSidebar({ isOpen, stage, setStage, onToggleSidebar }: LeftSi
       {/* Expanded Panel - Chat History / Files (only when open AND on chat page) */}
       <div className={cn(
         "flex flex-col bg-background transition-all duration-300 overflow-hidden",
-        isOpen && stage === "chat" ? "w-60 border-r border-border/50" : "w-0"
+        isOpen && (stage === "chat" || stage === "mediaGeneration" || stage === "imageGeneration" || stage === "videoGeneration" || stage === "audioGeneration") ? "w-60 border-r border-border/50" : "w-0"
       )}>
-        {isOpen && stage === "chat" && (
+        {isOpen && (stage === "chat" || stage === "mediaGeneration" || stage === "imageGeneration" || stage === "videoGeneration" || stage === "audioGeneration") && (
           <>
             {/* Panel Header */}
             <div className="shrink-0 px-4 py-3 flex items-center justify-between">
@@ -334,81 +340,160 @@ export function LeftSidebar({ isOpen, stage, setStage, onToggleSidebar }: LeftSi
 
             {/* Content Section */}
             <div className="flex-1 overflow-y-auto scrollbar-thin">
-              {leftSidebarMode === "chat" ? (
-                <div className="px-2 pb-4">
-                  {sessions.length === 0 && (
-                    <div className="text-center py-8">
-                      <MessageSquare className="h-6 w-6 text-muted-foreground/50 mx-auto mb-2" />
-                      <p className="text-xs text-muted-foreground">No chat history</p>
-                    </div>
-                  )}
+              {stage === "chat" ? (
+                leftSidebarMode === "chat" ? (
+                  <div className="px-2 pb-4">
+                    {sessions.length === 0 && (
+                      <div className="text-center py-8">
+                        <MessageSquare className="h-6 w-6 text-muted-foreground/50 mx-auto mb-2" />
+                        <p className="text-xs text-muted-foreground">No chat history</p>
+                      </div>
+                    )}
 
-                  {sessions.map((session) => {
-                    const isActive = session.id === currentSessionId
-                    const lastMessage = session.messages[session.messages.length - 1]
-                    const preview = lastMessage?.content.substring(0, 50) || "No messages"
+                    {sessions.map((session) => {
+                      const isActive = session.id === currentSessionId
+                      const lastMessage = session.messages[session.messages.length - 1]
+                      const preview = lastMessage?.content.substring(0, 50) || "No messages"
+
+                      return (
+                        <div
+                          key={session.id}
+                          onClick={() => handleSessionClick(session.id)}
+                          className={cn(
+                            "group relative mb-1 rounded-lg px-3 py-2.5 transition-colors cursor-pointer",
+                            isActive
+                              ? "bg-foreground/10 text-foreground"
+                              : "text-foreground hover:bg-muted/50"
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">
+                                {session.title}
+                              </p>
+                              <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+                                {preview}
+                              </p>
+                            </div>
+                            <button
+                              onClick={(e) => handleDeleteClick(e, session.id)}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-muted rounded"
+                            >
+                              <Trash2 className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  /* File System View */
+                  <div className="h-full">
+                    <FileSystemSidebar
+                      files={generatedFiles}
+                      images={images}
+                      models={currentModel ? [currentModel] : []}
+                      selectedFile={selectedFile}
+                      onSelectFile={(path: string, _type: "file" | "asset", data?: any) => {
+                        setSelectedFile(path)
+                        let assetData = data
+                        if (!assetData) {
+                          assetData = {
+                            name: path.split('/').pop() || path,
+                            path: path,
+                            type: 'code',
+                            content: generatedFiles[path] || ''
+                          }
+                        }
+                        const fullAssetData = {
+                          ...assetData,
+                          name: assetData.name || path.split('/').pop() || path,
+                          path: assetData.path || path,
+                          type: assetData.type || 'file'
+                        }
+                        setSelectedAsset(fullAssetData as any)
+                      }}
+                    />
+                  </div>
+                )
+              ) : stage === "mediaGeneration" || stage === "imageGeneration" || stage === "videoGeneration" ? (
+                <div className="px-2 pb-4">
+                  <div className="px-3 py-2 text-xs font-bold text-muted-foreground mb-1">$ recent</div>
+                  {(() => {
+                    const storeVideos = useAppStore.getState().generatedVideos
+                    const combined = [
+                      ...images.map(img => ({ type: 'image' as const, data: img, date: new Date(img.createdAt || 0).getTime() })),
+                      ...storeVideos.map(vid => ({ type: 'video' as const, data: vid, date: new Date((vid as any).createdAt || Date.now()).getTime() }))
+                    ].sort((a, b) => b.date - a.date)
+
+                    if (combined.length === 0) {
+                      return (
+                        <div className="text-center py-4">
+                          <Image className="h-6 w-6 text-muted-foreground/50 mx-auto mb-2" />
+                          <p className="text-xs text-muted-foreground">$ no_media_yet</p>
+                        </div>
+                      )
+                    }
 
                     return (
-                      <div
-                        key={session.id}
-                        onClick={() => handleSessionClick(session.id)}
-                        className={cn(
-                          "group relative mb-1 rounded-lg px-3 py-2.5 transition-colors cursor-pointer",
-                          isActive
-                            ? "bg-foreground/10 text-foreground"
-                            : "text-foreground hover:bg-muted/50"
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">
-                              {session.title}
-                            </p>
-                            <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
-                              {preview}
-                            </p>
-                          </div>
-                          <button
-                            onClick={(e) => handleDeleteClick(e, session.id)}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-muted rounded"
-                          >
-                            <Trash2 className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                          </button>
-                        </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {combined.map((item, idx) => {
+                          if (item.type === 'image') {
+                            const img = item.data as any
+                            return (
+                              <div key={idx} className="aspect-square border border-border group relative overflow-hidden bg-muted cursor-pointer hover:border-foreground transition-all">
+                                <img src={img.url} alt={`Gen ${idx}`} className="w-full h-full object-cover" />
+                              </div>
+                            )
+                          } else {
+                            const video = item.data as any
+                            return (
+                              <div key={idx} className="aspect-square border border-border group relative overflow-hidden bg-muted cursor-pointer hover:border-foreground transition-all">
+                                {video.status === 'succeeded' && (video.videoUrl || video.url) ? (
+                                  <video src={video.videoUrl || video.url} className="w-full h-full object-cover" />
+                                ) : (
+                                  <div className="w-full h-full flex flex-col items-center justify-center p-2 bg-black/40">
+                                    <span className="text-[10px] text-muted-foreground truncate w-full text-center">{video.prompt}</span>
+                                    <span className={cn(
+                                      "text-[8px] uppercase mt-1 px-1 rounded",
+                                      video.status === 'failed' ? "bg-red-500/10 text-red-500" : "bg-yellow-500/10 text-yellow-500"
+                                    )}>{video.status}</span>
+                                  </div>
+                                )}
+                                <div className="absolute bottom-1 right-1 bg-black/60 rounded p-1">
+                                  <Video className="w-3 h-3 text-white" />
+                                </div>
+                              </div>
+                            )
+                          }
+                        })}
                       </div>
                     )
-                  })}
+                  })()}
                 </div>
-              ) : (
-                /* File System View */
-                <div className="h-full">
-                  <FileSystemSidebar
-                    files={generatedFiles}
-                    images={images}
-                    models={currentModel ? [currentModel] : []}
-                    selectedFile={selectedFile}
-                    onSelectFile={(path: string, _type: "file" | "asset", data?: any) => {
-                      setSelectedFile(path)
-                      let assetData = data
-                      if (!assetData) {
-                        assetData = {
-                          name: path.split('/').pop() || path,
-                          path: path,
-                          type: 'code',
-                          content: generatedFiles[path] || ''
-                        }
-                      }
-                      const fullAssetData = {
-                        ...assetData,
-                        name: assetData.name || path.split('/').pop() || path,
-                        path: assetData.path || path,
-                        type: assetData.type || 'file'
-                      }
-                      setSelectedAsset(fullAssetData as any)
-                    }}
-                  />
+              ) : stage === "audioGeneration" ? (
+                <div className="px-2 pb-4">
+                  <div className="px-3 py-2 text-xs font-bold text-muted-foreground mb-1">$ history</div>
+                  {useAppStore.getState().generatedAudio.length === 0 ? (
+                    <div className="text-center py-8">
+                      <Music className="h-6 w-6 text-muted-foreground/50 mx-auto mb-2" />
+                      <p className="text-xs text-muted-foreground">$ no_audio_generated_yet</p>
+                    </div>
+                  ) : (
+                    useAppStore.getState().generatedAudio.map((audio, idx) => (
+                      <div key={idx} className="mb-2 p-2 border border-border rounded-lg bg-background hover:bg-muted cursor-pointer transition-colors">
+                        <p className="text-[10px] text-muted-foreground truncate">{audio.prompt}</p>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className={cn(
+                             "text-[10px] uppercase px-1 rounded",
+                             audio.status === "succeeded" ? "bg-green-500/10 text-green-500" : "bg-yellow-500/10 text-yellow-500"
+                          )}>{audio.status}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
-              )}
+              ) : null}
             </div>
           </>
         )}

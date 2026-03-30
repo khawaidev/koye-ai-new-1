@@ -1,19 +1,19 @@
 // Helper functions for the new image generation flow
 // ALL text-to-image generation uses HyperReal API exclusively
 
-import { generateImageWithHyperreal, type Gpt4oImageSize, type HyperrealImageModel, type NanoBananaAspectRatio } from "./hyperreal"
+import { generateImageWithRunway, type RunwayRatio, type RunwayImageModel } from "./runwayml"
 
 export type ImageModel = "koye-2dv1" | "koye-2dv2" | "koye-2dv1.5" | "koye-2dv2.5" | "koye-2dv3"
 
 /**
  * Generate a single image using HyperReal API
  * 
- * All model versions now route through HyperReal:
- * - koye-2dv1: HyperReal nano-banana-t2i (fast)
- * - koye-2dv1.5: HyperReal nano-banana-t2i
- * - koye-2dv2: HyperReal nano-banana-t2i
- * - koye-2dv2.5: HyperReal gpt-4o-image (high quality)
- * - koye-2dv3: HyperReal gpt-4o-image (high quality) - DEFAULT
+ * All model versions now route through RunwayML:
+ * - koye-2dv1: RunwayML gen4_image_turbo (fast)
+ * - koye-2dv1.5: RunwayML gen4_image_turbo
+ * - koye-2dv2: RunwayML gen4_image_turbo
+ * - koye-2dv2.5: RunwayML gen4_image (high quality)
+ * - koye-2dv3: RunwayML gen4_image_turbo (default)
  */
 export async function generateImageWithModel(
   prompt: string,
@@ -22,10 +22,10 @@ export async function generateImageWithModel(
   const modelConfig = getModelConfig(model)
 
   try {
-    const result = await generateImageWithHyperreal(prompt, modelConfig.options)
+    const result = await generateImageWithRunway(prompt, modelConfig.options)
     return result
   } catch (error) {
-    console.error(`HyperReal generation failed for model ${model}:`, error)
+    console.error(`RunwayML generation failed for model ${model}:`, error)
 
     // Dispatch event for UI to show warning
     const event = new CustomEvent('model-fallback-error', {
@@ -36,20 +36,19 @@ export async function generateImageWithModel(
     })
     window.dispatchEvent(event)
 
-    throw error // generateImageWithHyperreal already handles model fallback internally
+    throw error // generateImageWithRunway already handles model fallback internally
   }
 }
 
 /**
- * Get HyperReal model configuration based on internal model name
- * Returns model-specific options (size for gpt-4o-image, aspect_ratio for nano-banana-t2i)
+ * Get RunwayML model configuration based on internal model name
+ * Returns model-specific options
  */
 function getModelConfig(model: ImageModel): {
-  hyperrealModel: HyperrealImageModel
+  runwayModel: RunwayImageModel
   options: {
-    model: HyperrealImageModel
-    aspect_ratio?: NanoBananaAspectRatio
-    size?: Gpt4oImageSize
+    model: RunwayImageModel
+    ratio?: RunwayRatio
   }
 } {
   switch (model) {
@@ -57,19 +56,19 @@ function getModelConfig(model: ImageModel): {
     case "koye-2dv1.5":
     case "koye-2dv2":
       return {
-        hyperrealModel: "gpt-4o-image",
-        options: { model: "gpt-4o-image", size: "1024x1024" }
+        runwayModel: "gen4_image_turbo",
+        options: { model: "gen4_image_turbo", ratio: "1024:1024" }
       }
     case "koye-2dv2.5":
       return {
-        hyperrealModel: "gpt-4o-image",
-        options: { model: "gpt-4o-image", size: "1024x1792" }
+        runwayModel: "gen4_image",
+        options: { model: "gen4_image", ratio: "1024:1024" }
       }
     case "koye-2dv3":
     default:
       return {
-        hyperrealModel: "gpt-4o-image",
-        options: { model: "gpt-4o-image", size: "1024x1024" }
+        runwayModel: "gen4_image_turbo",
+        options: { model: "gen4_image_turbo", ratio: "1024:1024" }
       }
   }
 }
@@ -201,13 +200,9 @@ export async function generate3DViews(
     const validatedPrompt = viewPrompt.length > 5000 ? viewPrompt.substring(0, 5000).trim() : viewPrompt
 
     // Use portrait format for full-body character images
-    // nano-banana-t2i uses aspect_ratio, gpt-4o-image uses size
-    const isGpt4o = cfg.hyperrealModel === "gpt-4o-image"
-    const portraitOptions = isGpt4o
-      ? { model: "gpt-4o-image" as const, size: "1024x1792" as const }
-      : { model: "nano-banana-t2i" as const, aspect_ratio: "2:3" as const }
+    const portraitOptions = { model: cfg.runwayModel, ratio: "1080:1440" as RunwayRatio }
 
-    results[view] = await generateImageWithHyperreal(validatedPrompt, portraitOptions)
+    results[view] = await generateImageWithRunway(validatedPrompt, portraitOptions)
 
     // Add delay between generations
     if (i < views.length - 1) {

@@ -245,7 +245,8 @@ export async function editImageWithHyperreal(
                 if (!response.ok) throw new Error(`HTTP ${response.status}`)
             } catch (directErr) {
                 console.warn("   Direct fetch failed, trying local proxy...")
-                const proxyUrl = `http://localhost:3001/api/proxy-image?url=${encodeURIComponent(imageUrl)}`
+                const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001"
+                const proxyUrl = `${backendUrl}/api/proxy-image?url=${encodeURIComponent(imageUrl)}`
                 response = await fetch(proxyUrl)
                 if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`)
             }
@@ -454,4 +455,78 @@ async function blobToBase64(blob: Blob): Promise<string> {
         reader.onerror = reject
         reader.readAsDataURL(blob)
     })
+}
+
+/**
+ * Generate a 3D model from text using Hypereal (Meshy6)
+ * @param prompt Text description of the 3D model
+ * @param options Additional generation parameters
+ * @returns Object containing the model URL and format
+ */
+export async function generate3DModelWithHypereal(
+    prompt: string,
+    options?: {
+        art_style?: "realistic" | "sculpture"
+        topology?: "quad" | "triangle"
+        target_polycount?: number
+        enable_pbr?: boolean
+    }
+): Promise<{ url: string; format: string }> {
+    if (HYPERREAL_API_KEYS.length === 0) {
+        throw new Error("HyperReal API key is required. Set VITE_HYPERREAL_API_KEY in your .env file")
+    }
+
+    if (!prompt || prompt.trim().length === 0) {
+        throw new Error("Prompt is required for 3D generation")
+    }
+
+    return await withApiFallback(
+        HYPERREAL_API_KEYS,
+        async (apiKey) => {
+            const payload = {
+                model: "meshy6-text-to-3d",
+                input: {
+                    prompt: prompt.trim(),
+                    ...(options?.art_style && { art_style: options.art_style }),
+                    ...(options?.topology && { topology: options.topology }),
+                    ...(options?.target_polycount && { target_polycount: options.target_polycount }),
+                    ...(options?.enable_pbr !== undefined && { enable_pbr: options.enable_pbr }),
+                }
+            }
+
+            console.log("📤 Hypereal 3D Generation Request:", payload)
+
+            // The API documentation uses https://api.hypereal.cloud
+            const response = await fetch("https://api.hypereal.cloud/api/v1/3d/generate", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify(payload),
+            })
+
+            if (!response.ok) {
+                const errorText = await response.text().catch(() => response.statusText)
+                throw new Error(`Hypereal 3D API error: ${response.status} ${response.statusText} - ${errorText}`)
+            }
+
+            const data = await response.json()
+
+            if (!data.success || !data.outputUrl) {
+                throw new Error("Hypereal 3D API returned no model URL or failed")
+            }
+
+            console.log("✅ Hypereal 3D model generated successfully")
+            console.log("   Credits used:", data.creditsUsed)
+            console.log("   Model URL:", data.outputUrl)
+
+            return {
+                url: data.outputUrl,
+                format: "glb"
+            }
+        },
+        () => true,
+        1
+    )
 }

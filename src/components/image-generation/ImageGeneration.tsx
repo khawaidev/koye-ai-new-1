@@ -1,53 +1,39 @@
-import { ChevronLeft, ChevronRight, Download, Maximize2 } from "lucide-react"
+import { Download, Maximize2 } from "lucide-react"
 import * as React from "react"
 import { useState } from "react"
 import { useAuth } from "../../hooks/useAuth"
 import { saveImageToStorage } from "../../lib/imageStorage"
-import { cn } from "../../lib/utils"
 import { uuidv4 } from "../../lib/uuid"
 import {
-  generateImageWithHyperreal,
-  GPT4O_SIZES,
-  NANO_BANANA_ASPECT_RATIOS,
-  type Gpt4oImageSize,
-  type NanoBananaAspectRatio,
-} from "../../services/hyperreal"
+  generateImageWithRunway,
+  type RunwayRatio,
+  type RunwayImageModel,
+} from "../../services/runwayml"
 import { saveImage } from "../../services/multiDbDataService"
 import { useAppStore } from "../../store/useAppStore"
 import { Button } from "../ui/button"
 import { Select } from "../ui/select"
 import { ImageZoomModal } from "./ImageZoomModal"
 
-type GenerationMethod = "nano-banana-t2i" | "gpt-4o-image"
+
 type GenerationType = "single" | "four"
 
-interface GeneratedImageData {
-  url: string
-  prompt: string
-  method: string
-  view?: string
-}
+// GeneratedImageData interface removed as it's not needed with global store
 
-interface ImageGenerationProps {
-  isSidebarOpen?: boolean
-  onToggleSidebar?: () => void
-}
 
-export function ImageGeneration({ isSidebarOpen = false, onToggleSidebar }: ImageGenerationProps) {
+export function ImageGeneration() {
   const { user, isAuthenticated } = useAuth()
-  const { currentProject } = useAppStore()
-  const [method, setMethod] = useState<GenerationMethod>("gpt-4o-image")
+  const { currentProject, images, addImage } = useAppStore()
+  const [method, setMethod] = useState<RunwayImageModel>("gen4_image_turbo")
   const [generationType, setGenerationType] = useState<GenerationType>("single")
   const [prompt, setPrompt] = useState("")
   const [isGenerating, setIsGenerating] = useState(false)
-  const [generatedImages, setGeneratedImages] = useState<GeneratedImageData[]>([])
   const [error, setError] = useState<string | null>(null)
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
 
   // Model-specific options
-  const [nanoBananaRatio, setNanoBananaRatio] = useState<NanoBananaAspectRatio>("1:1")
-  const [gpt4oSize, setGpt4oSize] = useState<Gpt4oImageSize>("1024x1024")
+  const [runwayRatio, setRunwayRatio] = useState<RunwayRatio>("1024:1024")
 
   // Cache for placeholder asset ID (reuse same asset for all standalone images)
   const placeholderAssetIdRef = React.useRef<string | null>(null)
@@ -60,25 +46,25 @@ export function ImageGeneration({ isSidebarOpen = false, onToggleSidebar }: Imag
 
     setIsGenerating(true)
     setError(null)
-    setGeneratedImages([])
 
     try {
       // Build model-specific options
-      const genOptions = method === "gpt-4o-image"
-        ? { model: method, size: gpt4oSize }
-        : { model: method, aspect_ratio: nanoBananaRatio }
+      const genOptions = { model: method, ratio: runwayRatio }
 
       if (generationType === "single") {
-        // Generate single image using HyperReal
-        const imageUrl = await generateImageWithHyperreal(prompt, genOptions)
+        // Generate single image using RunwayML
+        const imageUrl = await generateImageWithRunway(prompt, genOptions)
 
-        const imageData: GeneratedImageData = {
+        const imageData = {
+          id: uuidv4(),
+          assetId: "", 
           url: imageUrl,
           prompt,
-          method,
+          createdAt: new Date().toISOString(),
+          view: "front" as const
         }
-        setGeneratedImages([imageData])
-        setSelectedImageIndex(0)
+        addImage(imageData)
+        setSelectedImageIndex(images.length) // Point to the new image
 
         await saveGeneratedImage({
           url: imageUrl,
@@ -92,36 +78,37 @@ export function ImageGeneration({ isSidebarOpen = false, onToggleSidebar }: Imag
         const views = ["front", "left", "right", "back"]
 
         // For 4 views (character sheets), use portrait format
-        const viewOptions = method === "gpt-4o-image"
-          ? { model: method, size: "1024x1792" as Gpt4oImageSize }
-          : { model: method, aspect_ratio: "2:3" as NanoBananaAspectRatio }
+        const viewOptions = { model: method, ratio: "1080:1440" as RunwayRatio }
 
         for (const view of views) {
           const viewPrompt = `${prompt}, ${view} view, orthographic, character sheet, clean white background`
 
-          const imageUrl = await generateImageWithHyperreal(viewPrompt, viewOptions)
+          const imageUrl = await generateImageWithRunway(viewPrompt, viewOptions)
           imageUrls.push(imageUrl)
+
+          const imageData = {
+            id: uuidv4(),
+            assetId: "",
+            url: imageUrl,
+            prompt: `${prompt}, ${view} view`,
+            createdAt: new Date().toISOString(),
+            view: view as any
+          }
+          addImage(imageData)
 
           if (views.indexOf(view) < views.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 1000))
           }
         }
+        
+        setSelectedImageIndex(images.length)
 
-        const imagesData: GeneratedImageData[] = imageUrls.map((url, idx) => ({
-          url,
-          prompt: `${prompt}, ${views[idx]} view`,
-          method,
-          view: views[idx],
-        }))
-        setGeneratedImages(imagesData)
-        setSelectedImageIndex(0)
-
-        for (const img of imagesData) {
+        for (let i = 0; i < views.length; i++) {
           await saveGeneratedImage({
-            url: img.url,
-            prompt: img.prompt,
-            method: img.method,
-            view: img.view as "front" | "left" | "right" | "back",
+            url: imageUrls[i],
+            prompt: `${prompt}, ${views[i]} view`,
+            method,
+            view: views[i] as any,
           })
         }
       }
@@ -133,6 +120,7 @@ export function ImageGeneration({ isSidebarOpen = false, onToggleSidebar }: Imag
     }
   }
 
+  // ... (helper functions stay below)
   // Helper function to get or create placeholder asset for standalone images
   const getOrCreatePlaceholderAsset = async (userId: string): Promise<string | null> => {
     if (placeholderAssetIdRef.current) {
@@ -279,91 +267,10 @@ export function ImageGeneration({ isSidebarOpen = false, onToggleSidebar }: Imag
 
   return (
     <div className="flex h-full bg-background overflow-hidden font-mono">
-      {/* Left Sidebar - Generated Images */}
-      <div className={cn(
-        "shrink-0 border-r border-border bg-background flex flex-col h-full overflow-hidden transition-all duration-300 font-mono",
-        isSidebarOpen ? "w-64" : "w-16"
-      )}>
-        <div className="border-b border-border p-4 shrink-0">
-          <div className="flex items-center gap-2">
-            {isSidebarOpen && (
-              <h2 className="text-sm font-bold text-foreground">Generated Images</h2>
-            )}
-            {onToggleSidebar && (
-              <button
-                onClick={onToggleSidebar}
-                className="ml-auto p-1 hover:bg-muted rounded transition-colors"
-                aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
-              >
-                {isSidebarOpen ? (
-                  <ChevronLeft className="h-4 w-4 text-foreground" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 text-foreground" />
-                )}
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4">
-          {generatedImages.length === 0 ? (
-            <div className="text-center text-muted-foreground font-mono text-xs py-8">
-              {isSidebarOpen && <p>$ no_images_generated_yet</p>}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {generatedImages.map((imageData, index) => (
-                <button
-                  key={index}
-                  onClick={() => setSelectedImageIndex(index)}
-                  className={cn(
-                    "w-full border-2 p-2 text-left transition-all font-mono text-xs",
-                    selectedImageIndex === index
-                      ? "bg-foreground text-background border-foreground"
-                      : "bg-background text-foreground border-border hover:bg-muted"
-                  )}
-                >
-                  <div className="w-full h-32 mb-2 border border-border overflow-hidden bg-background">
-                    <img
-                      src={imageData.url}
-                      alt={`Generated ${index + 1}`}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  {isSidebarOpen && (
-                    <>
-                      <div className="font-bold truncate">
-                        {generationType === "four"
-                          ? ["Front", "Left", "Right", "Back"][index]
-                          : "Single"}
-                      </div>
-                      <div className="text-xs mt-1 opacity-70 truncate">
-                        {imageData.method === "gpt-4o-image"
-                          ? "HyperReal (GPT-4o)"
-                          : "HyperReal (Nano)"}
-                      </div>
-                      {imageData.view && (
-                        <div className="text-xs mt-1 opacity-60">
-                          {imageData.view}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <div className="flex-1 overflow-y-auto">
           <div className="container mx-auto max-w-6xl px-6 py-8">
-            <div className="mb-8 border-b border-border pb-4">
-              <h1 className="text-3xl font-bold text-foreground mb-2">$ image_generation</h1>
-              <p className="text-muted-foreground text-sm">Generate images using HyperReal AI API</p>
-            </div>
-
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Left Column - Controls */}
               <div className="lg:col-span-1 space-y-6">
@@ -377,10 +284,11 @@ export function ImageGeneration({ isSidebarOpen = false, onToggleSidebar }: Imag
                       <label className="text-xs font-medium text-muted-foreground">Model</label>
                       <Select
                         value={method}
-                        onValueChange={(value) => setMethod(value as GenerationMethod)}
+                        onValueChange={(value) => setMethod(value as RunwayImageModel)}
                         options={[
-                          { value: "nano-banana-t2i", label: "Nano Banana (Fast — 34 credits)" },
-                          { value: "gpt-4o-image", label: "GPT-4o Image (HQ — 52 credits)" },
+                          { value: "gen4_image_turbo", label: "gen4_image_turbo (Default, Fast)" },
+                          { value: "gen4_image", label: "gen4_image (High Quality)" },
+                          { value: "gemini_2.5_flash", label: "gemini_2.5_flash" },
                         ]}
                       />
                     </div>
@@ -388,21 +296,24 @@ export function ImageGeneration({ isSidebarOpen = false, onToggleSidebar }: Imag
                     {/* Aspect Ratio / Size Selection — model-specific */}
                     <div className="space-y-2">
                       <label className="text-xs font-medium text-muted-foreground">
-                        {method === "gpt-4o-image" ? "Image Size" : "Aspect Ratio"}
+                        Aspect Ratio / Size
                       </label>
-                      {method === "gpt-4o-image" ? (
-                        <Select
-                          value={gpt4oSize}
-                          onValueChange={(value) => setGpt4oSize(value as Gpt4oImageSize)}
-                          options={GPT4O_SIZES.map(s => ({ value: s.value, label: s.label }))}
-                        />
-                      ) : (
-                        <Select
-                          value={nanoBananaRatio}
-                          onValueChange={(value) => setNanoBananaRatio(value as NanoBananaAspectRatio)}
-                          options={NANO_BANANA_ASPECT_RATIOS.map(r => ({ value: r.value, label: r.label }))}
-                        />
-                      )}
+                      <Select
+                        value={runwayRatio}
+                        onValueChange={(value) => setRunwayRatio(value as RunwayRatio)}
+                        options={[
+                          { value: "1024:1024", label: "1024:1024 (1:1)" },
+                          { value: "1360:768", label: "1360:768 (16:9)" },
+                          { value: "768:1360", label: "768:1360 (9:16)" },
+                          { value: "1080:1080", label: "1080:1080" },
+                          { value: "1440:1080", label: "1440:1080" },
+                          { value: "1080:1440", label: "1080:1440" },
+                          { value: "1920:1080", label: "1920:1080" },
+                          { value: "1080:1920", label: "1080:1920" },
+                          { value: "1280:720", label: "1280:720" },
+                          { value: "720:1280", label: "720:1280" },
+                        ]}
+                      />
                     </div>
 
                     {/* Generation Type Selection */}
@@ -463,29 +374,18 @@ export function ImageGeneration({ isSidebarOpen = false, onToggleSidebar }: Imag
                           <p className="text-muted-foreground font-mono text-sm">$ generating images...</p>
                         </div>
                       </div>
-                    ) : selectedImageIndex === null || generatedImages.length === 0 ? (
+                    ) : selectedImageIndex === null || images.length === 0 ? (
                       <div className="flex items-center justify-center min-h-[400px] text-muted-foreground font-mono text-sm">
                         <p>$ select_an_image_from_sidebar</p>
                       </div>
                     ) : (
                       <div className="relative group bg-background rounded-lg border-2 border-border overflow-hidden">
                         <img
-                          src={generatedImages[selectedImageIndex].url}
-                          alt={`Generated image ${selectedImageIndex + 1}`}
+                          src={images[selectedImageIndex]?.url}
+                          alt={`Generated image`}
                           className="w-full h-auto cursor-pointer"
                           onClick={() => setIsModalOpen(true)}
                         />
-                        {/* View label */}
-                        {generationType === "four" && (
-                          <div className="absolute top-2 left-2 px-2 py-1 bg-foreground text-background text-xs font-mono font-bold border border-foreground">
-                            {["Front", "Left", "Right", "Back"][selectedImageIndex]}
-                          </div>
-                        )}
-                        {generationType === "single" && (
-                          <div className="absolute top-2 left-2 px-2 py-1 bg-foreground text-background text-xs font-mono font-bold border border-foreground">
-                            Single
-                          </div>
-                        )}
                         {/* Action buttons */}
                         <div className="absolute bottom-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                           <Button
@@ -502,7 +402,7 @@ export function ImageGeneration({ isSidebarOpen = false, onToggleSidebar }: Imag
                             onClick={async (e) => {
                               e.stopPropagation()
                               try {
-                                const response = await fetch(generatedImages[selectedImageIndex].url)
+                                const response = await fetch(images[selectedImageIndex].url)
                                 const blob = await response.blob()
                                 const url = URL.createObjectURL(blob)
                                 const a = document.createElement("a")
@@ -533,10 +433,10 @@ export function ImageGeneration({ isSidebarOpen = false, onToggleSidebar }: Imag
       </div>
 
       {/* Image Zoom Modal */}
-      {selectedImageIndex !== null && generatedImages.length > 0 && (
+      {selectedImageIndex !== null && images[selectedImageIndex] && (
         <ImageZoomModal
-          imageUrl={generatedImages[selectedImageIndex].url}
-          imageName={generatedImages[selectedImageIndex].view || `Generated Image ${selectedImageIndex + 1}`}
+          imageUrl={images[selectedImageIndex].url}
+          imageName={images[selectedImageIndex].view || `Generated Image ${selectedImageIndex + 1}`}
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
         />

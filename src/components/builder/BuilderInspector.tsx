@@ -2,8 +2,9 @@ import { ArrowRight, Box, Download, FileText, Image as ImageIcon, Loader2, Music
 import { useEffect, useState } from "react"
 import { cn } from "../../lib/utils"
 import { create3DModelTask, queryTaskStatus } from "../../services/hitem3d"
-import { replaceBackgroundWithHyperreal } from "../../services/hyperreal"
 import { getImageById } from "../../services/multiDbDataService"
+import { editImageWithRunway } from "../../services/runwayml"
+import { editImageWithAicc } from "../../services/aicc"
 import { useAppStore } from "../../store/useAppStore"
 import { analyzeImageBackground, isObjectLight } from "../../utils/imageAnalysis"
 
@@ -185,17 +186,62 @@ export function BuilderInspector() {
         setShowBackgroundWarning(false)
 
         try {
+            // Helper to convert blob/http to base64
+            const urlToBase64 = async (url: string): Promise<{ base64: string, mimeType: string }> => {
+                if (url.startsWith('data:')) {
+                    const matches = url.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.*)$/)
+                    if (matches) return { mimeType: matches[1], base64: matches[2] }
+                }
+                let response: Response
+                try {
+                    response = await fetch(url)
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+                } catch (err) {
+                    const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001"
+                    const proxyUrl = `${backendUrl}/api/proxy-image?url=${encodeURIComponent(url)}`
+                    response = await fetch(proxyUrl)
+                }
+                const blob = await response.blob()
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader()
+                    reader.onloadend = () => {
+                        const dataUrl = reader.result as string
+                        const matches = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.*)$/)
+                        if (matches) resolve({ mimeType: matches[1], base64: matches[2] })
+                        else reject(new Error("Failed to convert image to base64"))
+                    }
+                    reader.onerror = reject
+                    reader.readAsDataURL(blob)
+                })
+            }
+
             // Analyze to get object color
             const analysis = await analyzeImageBackground(imageUrl)
             const objectIsLight = isObjectLight(analysis.averageObjectColor)
 
             // Generate background prompt based on object color
             const bgPrompt = objectIsLight
-                ? "clean solid dark gray background, plain, no gradient, uniform color"
-                : "clean solid white background, plain, no gradient, uniform color"
+                ? "Replace the background with: clean solid dark gray background, plain, no gradient, uniform color. Keep the foreground subject exactly the same."
+                : "Replace the background with: clean solid white background, plain, no gradient, uniform color. Keep the foreground subject exactly the same."
 
-            // Replace background
-            const newImageUrl = await replaceBackgroundWithHyperreal(imageUrl, bgPrompt)
+            // Extract raw base64
+            const { base64, mimeType } = await urlToBase64(imageUrl)
+
+            // Replace background — RunwayML first, AI.CC fallback
+            let newImageUrl: string | null = null
+            try {
+                console.log("🚀 [BG Replace 1/2] RunwayML gen4_image")
+                newImageUrl = await editImageWithRunway(bgPrompt, base64, mimeType)
+                console.log("✅ Background replaced via RunwayML!")
+            } catch (runwayErr) {
+                console.warn("⚠️ RunwayML BG replace failed, falling back to AI.CC…", runwayErr)
+            }
+
+            if (!newImageUrl) {
+                console.log("🔄 [BG Replace 2/2] AI.CC fallback")
+                newImageUrl = await editImageWithAicc(bgPrompt, base64, mimeType)
+                console.log("✅ Background replaced via AI.CC (fallback)!")
+            }
 
             // Store both for comparison
             setOriginalImageUrl(imageUrl)

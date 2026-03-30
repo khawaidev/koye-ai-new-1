@@ -8,14 +8,8 @@ import { uuidv4 } from "../../lib/uuid"
 import { generateChatTitle } from "../../services/chatTitleGenerator"
 import { getGameDevSystemPrompt } from "../../services/gameDevPrompt"
 import { sendMessageToGemini, sendMessageToGeminiStream, sendMessageToGeminiWithThinking } from "../../services/gemini"
+import { routeMessageStream, type ModelSwitchInfo } from "../../services/orchestrator"
 import { webSearch, formatSearchResultsForContext } from "../../services/searchapi"
-import { getGitHubOAuthUrl } from "../../services/github"
-import {
-  ensureProjectRepository,
-  getGitHubUser,
-  initializeProjectGitHubSync,
-  type GitHubConnectionDetails
-} from "../../services/githubProjectSync"
 import { buildProjectHistoryPrompt, recordSessionToProjectContext } from "../../services/projectContext"
 import { loadProjectFilesFromStorage, saveSingleProjectFile } from "../../services/projectFiles"
 import { createProject, getProjects } from "../../services/supabase"
@@ -25,7 +19,6 @@ import { useGameDevStore } from "../../store/useGameDevStore"
 import { getTaskDisplayName, useTaskStore, type TaskConfig, type TaskType } from "../../store/useTaskStore"
 import type { Project } from "../../types"
 import { GameDevFlowUI } from "../game-flow/GameDevFlowUI"
-import { GitHubConnectionPrompt } from "../github/GitHubConnectionPrompt"
 import { TaskProposalCard } from "../tasks/TaskProposalCard"
 import { useTheme } from "../theme-provider"
 import { Button } from "../ui/button"
@@ -47,10 +40,12 @@ export function ChatInterface() {
     updateSessionTitle,
     currentProject,
     setCurrentProject,
-    githubConnection,
     setGeneratedFiles,
     addGeneratedFile
   } = useAppStore()
+
+  // Make sure we type this appropriately if it can be pulled from a higher context or context wrapper
+  const setStage = useAppStore(state => state.setStage) 
 
   const {
     isActive: isGameDevActive,
@@ -72,7 +67,6 @@ export function ChatInterface() {
   const [isLoadingProjects, setIsLoadingProjects] = useState(false)
   const [newProjectName, setNewProjectName] = useState("")
   const [newProjectDescription, setNewProjectDescription] = useState("")
-  const [showGitHubPrompt, setShowGitHubPrompt] = useState(false)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [showKoyeText, setShowKoyeText] = useState(true)
   const [isChatLoading, setIsChatLoading] = useState(false)
@@ -93,7 +87,7 @@ export function ChatInterface() {
     return () => clearInterval(interval)
   }, [])
 
-  const { setGitHubConnection } = useAppStore()
+
 
   // Load projects when dialog opens
   useEffect(() => {
@@ -132,7 +126,7 @@ export function ChatInterface() {
         const files = await loadProjectFilesFromStorage(
           project.id,
           user.id,
-          githubConnection
+          null
         )
 
         if (Object.keys(files).length > 0) {
@@ -148,11 +142,23 @@ export function ChatInterface() {
               const parsed = JSON.parse(savedData)
               if (parsed.files && Object.keys(parsed.files).length > 0) {
                 console.log('Loaded files from localStorage:', Object.keys(parsed.files))
-                setGeneratedFiles(parsed.files)
+                // Filter out [STORED_IN_DB:...] markers
+                const safeFiles = { ...parsed.files }
+                for (const [path, content] of Object.entries(safeFiles)) {
+                  if (typeof content === 'string' && content.startsWith('[STORED_IN_DB:')) {
+                    delete safeFiles[path]
+                  }
+                }
+                setGeneratedFiles(safeFiles)
+              } else {
+                setGeneratedFiles({})
               }
             } catch (error) {
               console.error('Error loading from localStorage:', error)
+              setGeneratedFiles({})
             }
+          } else {
+            setGeneratedFiles({})
           }
         }
       } catch (error) {
@@ -165,12 +171,11 @@ export function ChatInterface() {
       localStorage.setItem(`project_${currentSessionId}`, JSON.stringify(project))
     }
 
-    // Auto-open builder in new tab
-    const builderUrl = `/builder/${project.id}?name=${encodeURIComponent(project.name)}&fromChat=true`
-    window.open(builderUrl, `builder_${project.id}`)
-
     // Mark this session as connected to project for sync
     localStorage.setItem(`chat_project_sync_${currentSessionId}`, project.id)
+
+    // Open integrated builder
+    setStage?.("build")
   }
 
 
@@ -199,9 +204,8 @@ export function ChatInterface() {
         // Clear the pending connection
         localStorage.removeItem('pending_project_connection')
 
-        // Auto-open builder with the project
-        const builderUrl = `/builder/${project.id}?name=${encodeURIComponent(project.name)}&fromChat=true`
-        window.open(builderUrl, `builder_${project.id}`)
+        // Open integrated builder
+        setStage?.("build")
       } catch (error) {
         console.error("Error connecting pending project:", error)
         localStorage.removeItem('pending_project_connection')
@@ -261,7 +265,7 @@ export function ChatInterface() {
           const files = await loadProjectFilesFromStorage(
             currentProject.id,
             user.id,
-            githubConnection
+            null
           )
 
           if (Object.keys(files).length > 0) {
@@ -277,7 +281,15 @@ export function ChatInterface() {
                 const parsed = JSON.parse(savedData)
                 if (parsed.files && Object.keys(parsed.files).length > 0) {
                   const currentFiles = useAppStore.getState().generatedFiles
-                  setGeneratedFiles({ ...currentFiles, ...parsed.files })
+                  // Filter out [STORED_IN_DB:...] markers so we don't accidentally corrupt local state
+                  const safeFiles = { ...parsed.files }
+                  for (const [path, content] of Object.entries(safeFiles)) {
+                    if (typeof content === 'string' && content.startsWith('[STORED_IN_DB:')) {
+                      // Remove it from the update so the current valid file remains
+                      delete safeFiles[path]
+                    }
+                  }
+                  setGeneratedFiles({ ...currentFiles, ...safeFiles })
                 }
               } catch (error) {
                 console.error('Error loading from localStorage:', error)
@@ -298,78 +310,15 @@ export function ChatInterface() {
   const handleCreateProject = async () => {
     if (!user || !newProjectName.trim()) return
 
-    // Check if GitHub is connected with valid token
-    if (!githubConnection || !githubConnection.accessToken) {
-      setShowCreateProjectDialog(false)
-      setShowGitHubPrompt(true)
-      return
-    }
-
-    // Don't allow creation with placeholder OAuth code
-    if (githubConnection.accessToken.startsWith('oauth_code_')) {
-      alert("GitHub connection pending. Please complete the OAuth flow or reconnect.")
-      setShowCreateProjectDialog(false)
-      setShowGitHubPrompt(true)
-      return
-    }
-
     setIsCreatingProject(true)
 
     try {
-      // Get GitHub user info to determine repo owner
-      const githubUser = await getGitHubUser(githubConnection.accessToken)
-      if (!githubUser) {
-        throw new Error("Could not fetch GitHub user info. Please reconnect your GitHub account.")
-      }
-
-      // Ensure the koye-projects repository exists
-      const repo = await ensureProjectRepository(
-        githubConnection.accessToken,
-        githubUser.login
-      )
-      if (!repo) {
-        throw new Error("Failed to create or access the koye-projects repository.")
-      }
-
-      // Update connection with repo info if needed
-      if (!githubConnection.repoOwner || !githubConnection.repoName) {
-        const updatedConnection = {
-          ...githubConnection,
-          repoOwner: repo.full_name.split('/')[0],
-          repoName: repo.name,
-          branch: repo.default_branch || 'main'
-        }
-        setGitHubConnection(updatedConnection)
-
-        // Persist to localStorage
-        const storageKey = `github_connection_${user.id}`
-        localStorage.setItem(storageKey, JSON.stringify(updatedConnection))
-      }
-
       // Create project in Supabase
       const newProject = await createProject({
         userId: user.id,
         name: newProjectName.trim(),
         description: newProjectDescription.trim() || "",
       })
-
-      // Initialize GitHub sync for the project (create folder in repo)
-      const connection: GitHubConnectionDetails = {
-        accessToken: githubConnection.accessToken,
-        repoOwner: repo.full_name.split('/')[0],
-        repoName: repo.name,
-        branch: repo.default_branch || 'main'
-      }
-
-      const syncInitialized = await initializeProjectGitHubSync(
-        connection,
-        newProject.id,
-        newProject.name
-      )
-
-      if (!syncInitialized) {
-        console.warn("Failed to initialize GitHub sync for project, but project was created.")
-      }
 
       // Update local state
       setProjects([newProject, ...projects])
@@ -384,9 +333,8 @@ export function ChatInterface() {
         localStorage.setItem(`chat_project_sync_${currentSessionId}`, newProject.id)
       }
 
-      // Auto-open builder with the new project
-      const builderUrl = `/builder/${newProject.id}?name=${encodeURIComponent(newProject.name)}&fromChat=true`
-      window.open(builderUrl, `builder_${newProject.id}`)
+      // Open integrated builder
+      setStage?.("build")
     } catch (error) {
       console.error("Error creating project:", error)
       alert(error instanceof Error ? error.message : "Failed to create project. Please try again.")
@@ -395,16 +343,7 @@ export function ChatInterface() {
     }
   }
 
-  const handleConnectGitHub = () => {
-    try {
-      const oauthUrl = getGitHubOAuthUrl()
-      window.location.href = oauthUrl
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to connect to GitHub"
-      alert(errorMessage)
-      console.error("GitHub OAuth error:", error)
-    }
-  }
+
 
 
 
@@ -806,7 +745,39 @@ ${existingFilesContext}`
       let displayedWordCount = 0
 
       try {
-        for await (const chunk of sendMessageToGeminiStream(geminiMessages)) {
+        // ─── Orchestrator: classify intent and route to optimal model ───
+        const orchestratorStream = routeMessageStream(geminiMessages, (info: ModelSwitchInfo) => {
+          if (info.intent !== "general") {
+            setIsSwitchingModel(true)
+            setSwitchingMessage(`Routing to ${info.displayName}...`)
+            console.log(`[Orchestrator] Switching to ${info.modelName} for ${info.intent}`)
+          }
+        })
+
+        // Check first yield — if the generator returns intent "general", use existing Gemini streaming
+        const firstResult = await orchestratorStream.next()
+        let useGeminiDirect = false
+
+        if (firstResult.done) {
+          // Generator returned immediately with intent ("general")
+          useGeminiDirect = true
+          setIsSwitchingModel(false)
+          setSwitchingMessage("")
+        }
+
+        // Determine which stream to consume
+        const activeStream = useGeminiDirect 
+          ? sendMessageToGeminiStream(geminiMessages)
+          : (async function* () {
+              // Yield the first chunk we already got
+              if (!firstResult.done && firstResult.value) {
+                yield firstResult.value
+              }
+              // Continue yielding from orchestrator
+              yield* orchestratorStream
+            })()
+
+        for await (const chunk of activeStream) {
           // Check if stop was requested
           if (shouldStopRef.current) {
             break
@@ -1334,7 +1305,7 @@ ${existingFilesContext}`
           currentProject.name,
           path,
           fileContent,
-          githubConnection
+          null
         )
         console.log(`AI created file: ${path}`)
       } catch (error) {
@@ -1352,7 +1323,7 @@ ${existingFilesContext}`
           currentProject.name,
           path,
           fileContent,
-          githubConnection
+          null
         )
         console.log(`AI edited file: ${path}`)
       } catch (error) {
@@ -1419,16 +1390,28 @@ ${existingFilesContext}`
         const timestamp = Date.now()
         const truncId = String(timestamp).slice(-7)
         const editedName = `images/ed_${truncId}.png`
-        const newContent = `# Image Asset\n# URL: ${editedUrl}\n# Prompt: ${prompt}`
+        const metadataName = `images/ed_${truncId}.md`
 
+        // Save actual image URL to generatedFiles + storage (this is what the viewer loads)
         addGeneratedFile(editedName, editedUrl)
         await saveSingleProjectFile(
           currentProject.id,
           user.id,
           currentProject.name,
           editedName,
+          editedUrl,
+          null
+        )
+
+        // Save metadata separately as .md
+        const newContent = `# Image Asset\n# URL: ${editedUrl}\n# Prompt: ${prompt}`
+        await saveSingleProjectFile(
+          currentProject.id,
+          user.id,
+          currentProject.name,
+          metadataName,
           newContent,
-          githubConnection
+          null
         )
 
         // Add a message updating the user with the generated image
@@ -1500,21 +1483,30 @@ ${existingFilesContext}`
     addMessage(message)
   }
 
-  // Sync generatedFiles to builder when connected to project
+  // Sync signal to builder when connected to project (only file paths to prevent QuotaExceededError)
   useEffect(() => {
     if (currentProject && currentSessionId) {
       // Update sync timestamp to notify builder of changes
+      // We DO NOT store the full file contents here because large binary files (base64)
+      // will quickly exceed the 5MB localStorage quota.
       const syncKey = `project_${currentProject.id}_sync`
       const currentFiles = getGeneratedFiles()
-      localStorage.setItem(syncKey, JSON.stringify({
-        timestamp: Date.now(),
-        sessionId: currentSessionId,
-        files: currentFiles
-      }))
+      const filePaths = Object.keys(currentFiles)
+      
+      try {
+        localStorage.setItem(syncKey, JSON.stringify({
+          timestamp: Date.now(),
+          sessionId: currentSessionId,
+          filePaths // Only store paths/keys, not the massive strings
+        }))
+      } catch (error) {
+        console.warn("Could not sync file paths to localStorage", error)
+      }
     }
   }, [currentProject, currentSessionId, getGeneratedFiles])
 
-  // Listen for file changes from builder (bidirectional sync)
+  // Listen for file changes from builder (bidirectional sync via local storage signal)
+  // This is mostly disabled because useAppStore already shares generatedFiles.
   useEffect(() => {
     if (!currentProject || !currentSessionId) return
 
@@ -1526,16 +1518,18 @@ ${existingFilesContext}`
       if (syncData) {
         try {
           const parsed = JSON.parse(syncData)
-          const currentFiles = getGeneratedFiles()
-
-          // Only update if the change came from builder (different sessionId) and files are different
+          
+          // We only use this as a reload signal if the sessionId changed,
+          // but we no longer read parsed.files because we don't store them here to avoid quota errors.
+          // Since useAppStore is global, Zustand's state is already shared between components.
           const lastCheck = localStorage.getItem(`${syncKey}_chat_lastCheck`)
           const lastCheckTime = lastCheck ? parseInt(lastCheck) : 0
 
-          if (parsed.sessionId !== currentSessionId && parsed.timestamp > lastCheckTime && JSON.stringify(currentFiles) !== JSON.stringify(parsed.files)) {
-            console.log('Chat: Syncing files from builder...')
-            setGeneratedFiles(parsed.files)
+          if (parsed.sessionId !== currentSessionId && parsed.timestamp > lastCheckTime) {
+            console.log('Chat: Sync signal received from builder')
             localStorage.setItem(`${syncKey}_chat_lastCheck`, parsed.timestamp.toString())
+            // Note: Since we don't pass full files in localStorage anymore due to quota limits,
+            // we rely on Zustand's useAppStore to have the right state, or we would trigger a refresh here.
           }
         } catch (error) {
           console.error('Error syncing from builder:', error)
@@ -1544,7 +1538,7 @@ ${existingFilesContext}`
     }, 2000)
 
     return () => clearInterval(syncInterval)
-  }, [currentProject, currentSessionId, getGeneratedFiles, setGeneratedFiles])
+  }, [currentProject, currentSessionId])
 
   // Generate title for the current session after first AI response
   const generateTitleForSession = async () => {
@@ -1607,14 +1601,8 @@ ${existingFilesContext}`
     // The task progress is shown only in the TaskBar above the input
 
     // Add a brief AI message acknowledging the background task
-    const taskDisplayName = getTaskDisplayName(type)
-    const bgMsg: Message = {
-      id: uuidv4(),
-      role: "assistant",
-      content: `Got it! I've started **${taskDisplayName}** in the background — you can track its progress in the task bar above. While that's running, tell me more about your idea or ask me anything else! 🚀`,
-      timestamp: new Date(),
-    }
-    addMessage(bgMsg)
+    // (Moved to WorkflowManager.tsx to combine with the "Saved prompt" message)
+
 
     // Dispatch custom event so WorkflowManager can handle the generation
     const event = new CustomEvent('user-confirmed-asset-generation', {
@@ -1950,28 +1938,7 @@ ${existingFilesContext}`
               </button>
             </div>
 
-            {/* GitHub Connection Check */}
-            {(!githubConnection || !githubConnection.accessToken) && (
-              <div className="mb-4 p-4 bg-yellow-50 border-2 border-yellow-600 rounded">
-                <div className="flex flex-col gap-3">
-                  <p className="text-yellow-800 text-sm font-mono font-bold">
-                    GitHub Connection Required
-                  </p>
-                  <p className="text-yellow-700 text-xs font-mono">
-                    You need to connect your GitHub account to create projects.
-                  </p>
-                  <Button
-                    onClick={() => {
-                      setShowCreateProjectDialog(false)
-                      handleConnectGitHub()
-                    }}
-                    className="bg-yellow-600 text-white hover:bg-yellow-700 border-2 border-yellow-600 font-mono text-xs font-bold shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]"
-                  >
-                    Connect GitHub
-                  </Button>
-                </div>
-              </div>
-            )}
+
 
             <div className="space-y-4">
               <div>
@@ -2009,7 +1976,7 @@ ${existingFilesContext}`
               <div className="flex gap-2">
                 <Button
                   onClick={handleCreateProject}
-                  disabled={!newProjectName.trim() || !githubConnection || !githubConnection.accessToken || isCreatingProject}
+                  disabled={!newProjectName.trim() || isCreatingProject}
                   className="flex-1 bg-foreground text-background hover:bg-muted-foreground border-2 border-foreground font-mono text-xs font-bold shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isCreatingProject ? "Creating..." : "Create & Connect"}
@@ -2031,16 +1998,7 @@ ${existingFilesContext}`
         </div>
       )}
 
-      {/* GitHub Connection Prompt Modal */}
-      {showGitHubPrompt && (
-        <GitHubConnectionPrompt
-          onClose={() => setShowGitHubPrompt(false)}
-          onConnected={() => {
-            setShowGitHubPrompt(false)
-            setShowCreateProjectDialog(true)
-          }}
-        />
-      )}
+
 
       <GameDevFlowUI />
     </VoiceChatLayout>

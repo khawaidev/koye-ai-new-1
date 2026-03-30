@@ -29,10 +29,7 @@ import {
 } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import appIconLight from "../assets/icon.jpg"
-import appIconDark from "../assets/icon.png"
 import { VideoPlayer } from "../components/chat/VideoPlayer"
-import { GitHubConnectionPrompt } from "../components/github/GitHubConnectionPrompt"
 import { ModelViewer } from "../components/model-viewer/ModelViewer"
 import { useTheme } from "../components/theme-provider"
 import { Button } from "../components/ui/button"
@@ -40,13 +37,6 @@ import { ThemeToggle } from "../components/ui/theme-toggle"
 import { useAuth } from "../hooks/useAuth"
 import { usePricing } from "../hooks/usePricing"
 import { cn } from "../lib/utils"
-import { getGitHubOAuthUrl } from "../services/github"
-import {
-  ensureProjectRepository,
-  getGitHubUser,
-  initializeProjectGitHubSync,
-  type GitHubConnectionDetails
-} from "../services/githubProjectSync"
 import { deleteAudio, deleteImage, deleteModel, deleteVideo, getUserAudio, getUserImages, getUserModels, getUserVideos, type AudioWithDb, type ImageWithDb, type ModelWithDb, type VideoWithDb } from "../services/multiDbDataService"
 import { getPricingPlans, subscribeToPlan } from "../services/pricingService"
 import { saveSingleProjectFile, type GitHubConnectionInput } from "../services/projectFiles"
@@ -57,13 +47,22 @@ import type { Model, Project } from "../types"
 
 type TabType = "explore" | "profile" | "usage" | "projects" | "features" | "accounts"
 
+let globalAssetsCache: {
+  userId: string | null;
+  timestamp: number;
+  images: ImageWithDb[];
+  models: ModelWithDb[];
+  videos: VideoWithDb[];
+  audio: AudioWithDb[];
+} | null = null;
+const CACHE_DURATION_MS = 2 * 60 * 1000; // 2 minutes
+
 export function Dashboard() {
   const { theme } = useTheme()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { user, loading } = useAuth()
   const { subscription, usage, refresh: refreshPricing } = usePricing()
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const tabParam = searchParams.get("tab") as TabType | null
   const [activeTab, setActiveTab] = useState<TabType>(tabParam || "explore")
   const [userImages, setUserImages] = useState<ImageWithDb[]>([])
@@ -88,7 +87,7 @@ export function Dashboard() {
   const [showProjectDialog, setShowProjectDialog] = useState(false)
   const [newProjectName, setNewProjectName] = useState("")
   const [newProjectDescription, setNewProjectDescription] = useState("")
-  const { githubConnection, setGitHubConnection, addGeneratedFile, setCurrentProject } = useAppStore()
+  const { addGeneratedFile, setCurrentProject, isSidebarOpen, setIsSidebarOpen } = useAppStore()
 
   // Import to Project State
   const [showImportDialog, setShowImportDialog] = useState(false)
@@ -96,7 +95,6 @@ export function Dashboard() {
   const [isImporting, setIsImporting] = useState(false)
 
   // GitHub Connection Prompt State
-  const [showGitHubPrompt, setShowGitHubPrompt] = useState(false)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
 
   // Token Usage State
@@ -120,8 +118,19 @@ export function Dashboard() {
     // User profile loading can be implemented here if needed
   }
 
-  const loadUserAssets = async () => {
+  const loadUserAssets = async (forceRefresh = false) => {
     if (!user) return
+
+    if (!forceRefresh && globalAssetsCache && globalAssetsCache.userId === user.id) {
+      if (Date.now() - globalAssetsCache.timestamp < CACHE_DURATION_MS) {
+        setUserImages(globalAssetsCache.images);
+        setUserModels(globalAssetsCache.models);
+        setUserVideos(globalAssetsCache.videos);
+        setUserAudio(globalAssetsCache.audio);
+        return; // early return to save egress
+      }
+    }
+
     setIsLoadingAssets(true)
     try {
       const [images, models, videos, audio] = await Promise.all([
@@ -130,6 +139,16 @@ export function Dashboard() {
         getUserVideos(user.id),
         getUserAudio(user.id),
       ])
+
+      globalAssetsCache = {
+        userId: user.id,
+        timestamp: Date.now(),
+        images,
+        models,
+        videos,
+        audio
+      };
+
       setUserImages(images)
       setUserModels(models)
       setUserVideos(videos)
@@ -173,8 +192,8 @@ export function Dashboard() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (!document.hidden && activeTab === "profile" && user) {
-        console.log("Dashboard visible - refreshing assets")
-        loadUserAssets()
+        console.log("Dashboard visible - refreshing assets (forced)")
+        loadUserAssets(true)
       }
     }
 
@@ -194,6 +213,12 @@ export function Dashboard() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, user, loadProjects])
+
+  // Set sidebar open by default ONLY for dashboard
+  useEffect(() => {
+    setIsSidebarOpen(true)
+    return () => setIsSidebarOpen(false)
+  }, [setIsSidebarOpen])
 
   const loadTokenUsage = async () => {
     if (!user) return
@@ -223,78 +248,15 @@ export function Dashboard() {
   const handleCreateProject = async () => {
     if (!user || !newProjectName.trim()) return
 
-    // Check if GitHub is connected with valid token
-    if (!githubConnection || !githubConnection.accessToken) {
-      setShowProjectDialog(false)
-      setShowGitHubPrompt(true)
-      return
-    }
-
-    // Don't allow creation with placeholder OAuth code
-    if (githubConnection.accessToken.startsWith('oauth_code_')) {
-      alert("GitHub connection pending. Please complete the OAuth flow or reconnect.")
-      setShowProjectDialog(false)
-      setShowGitHubPrompt(true)
-      return
-    }
-
     setIsCreatingProject(true)
 
     try {
-      // Get GitHub user info to determine repo owner
-      const githubUser = await getGitHubUser(githubConnection.accessToken)
-      if (!githubUser) {
-        throw new Error("Could not fetch GitHub user info. Please reconnect your GitHub account.")
-      }
-
-      // Ensure the koye-projects repository exists
-      const repo = await ensureProjectRepository(
-        githubConnection.accessToken,
-        githubUser.login
-      )
-      if (!repo) {
-        throw new Error("Failed to create or access the koye-projects repository.")
-      }
-
-      // Update connection with repo info if needed
-      if (!githubConnection.repoOwner || !githubConnection.repoName) {
-        const updatedConnection = {
-          ...githubConnection,
-          repoOwner: repo.full_name.split('/')[0],
-          repoName: repo.name,
-          branch: repo.default_branch || 'main'
-        }
-        setGitHubConnection(updatedConnection)
-
-        // Persist to localStorage
-        const storageKey = `github_connection_${user.id}`
-        localStorage.setItem(storageKey, JSON.stringify(updatedConnection))
-      }
-
-      // Create project in Supabase
+      // Create project in Supabase (no GitHub required)
       const newProject = await createProject({
         userId: user.id,
         name: newProjectName.trim(),
         description: newProjectDescription.trim() || "",
       })
-
-      // Initialize GitHub sync for the project (create folder in repo)
-      const connection: GitHubConnectionDetails = {
-        accessToken: githubConnection.accessToken,
-        repoOwner: repo.full_name.split('/')[0],
-        repoName: repo.name,
-        branch: repo.default_branch || 'main'
-      }
-
-      const syncInitialized = await initializeProjectGitHubSync(
-        connection,
-        newProject.id,
-        newProject.name
-      )
-
-      if (!syncInitialized) {
-        console.warn("Failed to initialize GitHub sync for project, but project was created.")
-      }
 
       // Update local state
       setProjects([newProject, ...projects])
@@ -319,9 +281,14 @@ export function Dashboard() {
   }
 
   const handleOpenProject = (project: Project) => {
-    const builderUrl =
-      "/builder/" + project.id + "?name=" + encodeURIComponent(project.name)
-    window.open(builderUrl, "_blank")
+    // Store project for chat to automatically connect
+    localStorage.setItem('pending_project_connection', JSON.stringify(project))
+
+    // Disconnect any previous project and set the new one
+    setCurrentProject(project)
+
+    // Navigate to chat interface (main page) - chat will auto-connect the project and open builder
+    navigate('/app')
   }
 
   const handleDeleteProject = async (e: React.MouseEvent, projectId: string) => {
@@ -337,183 +304,7 @@ export function Dashboard() {
     }
   }
 
-  const handleConnectGitHub = () => {
-    try {
-      // Redirect to GitHub OAuth
-      const oauthUrl = getGitHubOAuthUrl()
-      window.location.href = oauthUrl
-    } catch (error) {
-      // Show error message if GitHub Client ID is not configured
-      const errorMessage = error instanceof Error ? error.message : "Failed to connect to GitHub"
-      alert(errorMessage)
-      console.error("GitHub OAuth error:", error)
-    }
-  }
 
-  // Load GitHub connection from localStorage on mount and when user changes
-  useEffect(() => {
-    if (user) {
-      const storageKey = "github_connection_" + user.id
-      const storedConnection = localStorage.getItem(storageKey)
-      console.log("Loading GitHub connection for user:", user.id, "Found:", !!storedConnection)
-
-      if (storedConnection) {
-        try {
-          const connection = JSON.parse(storedConnection)
-          console.log("Parsed GitHub connection:", connection)
-
-          // Set connection regardless of whether it's a placeholder or real token
-          // This allows the UI to show "Connected" status
-          if (connection && connection.accessToken) {
-            setGitHubConnection(connection)
-            console.log("GitHub connection loaded and set in store")
-          }
-        } catch (error) {
-          console.error("Failed to load GitHub connection:", error)
-        }
-      } else {
-        // No stored connection, ensure store is cleared
-        setGitHubConnection(null)
-      }
-    } else {
-      // Clear connection if user logs out
-      setGitHubConnection(null)
-    }
-  }, [user, setGitHubConnection])
-
-  // Check for GitHub OAuth callback
-  useEffect(() => {
-    // Wait for user to be loaded before processing OAuth callback
-    if (loading) {
-      console.log("Waiting for user to load before processing OAuth callback...")
-      return
-    }
-
-    const urlParams = new URLSearchParams(window.location.search)
-    const code = urlParams.get("code")
-    const state = urlParams.get("state")
-    const error = urlParams.get("error")
-    const errorDescription = urlParams.get("error_description")
-
-    // Check if we've already processed this callback (to prevent duplicate processing)
-    const processedKey = code ? "github_oauth_processed_" + code : null
-    if (processedKey && sessionStorage.getItem(processedKey)) {
-      // Already processed this callback, just clean up URL if needed
-      if (code || state) {
-        const newUrl = window.location.pathname + "?tab=projects"
-        window.history.replaceState({}, "", newUrl)
-      }
-      return
-    }
-
-    if (error) {
-      // Handle OAuth error
-      console.error("GitHub OAuth error:", error, errorDescription)
-      alert("GitHub OAuth error: " + (errorDescription || error))
-      // Clean up URL
-      const newUrl = window.location.pathname + "?tab=projects"
-      window.history.replaceState({}, "", newUrl)
-      return
-    }
-
-    if (code && state) {
-      // Verify state matches what we stored
-      const storedState = sessionStorage.getItem("github_oauth_state")
-      if (!storedState) {
-        // State was already processed and cleaned up, or this is a duplicate callback
-        // Just clean up URL and return
-        const newUrl = window.location.pathname + "?tab=projects"
-        window.history.replaceState({}, "", newUrl)
-        return
-      }
-
-      if (state !== storedState) {
-        console.error("GitHub OAuth state mismatch. Expected:", storedState, "Got:", state)
-        alert("GitHub OAuth verification failed. Please try again.")
-        sessionStorage.removeItem("github_oauth_state")
-        // Clean up URL
-        const newUrl = window.location.pathname + "?tab=projects"
-        window.history.replaceState({}, "", newUrl)
-        return
-      }
-
-      // Handle OAuth callback - wait for user to be available
-      console.log("GitHub OAuth callback received:", { code, state, userId: user?.id, loading })
-
-      if (!user) {
-        console.warn("User not loaded yet, will retry when user is available")
-        // User not loaded yet, will retry when user is available (this useEffect will run again)
-        return
-      }
-
-      // Mark this callback as processed to prevent duplicate processing
-      if (processedKey) {
-        sessionStorage.setItem(processedKey, "true")
-      }
-
-      // Exchange the OAuth code for an access token via local API server
-      const exchangeToken = async () => {
-        try {
-          console.log("Exchanging OAuth code for access token...")
-
-          // Use local API server for development
-          // For production, use Supabase Edge Function or your own backend
-          const apiUrl = import.meta.env.VITE_GITHUB_OAUTH_API_URL || "http://localhost:3001/api/github-oauth"
-
-          const response = await fetch(apiUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ code }),
-          })
-
-          if (!response.ok) {
-            const errorData = await response.json()
-            throw new Error(errorData.error || "Failed to exchange OAuth code")
-          }
-
-          const data = await response.json()
-          console.log("✓ OAuth token exchange successful:", { user: data.user?.login })
-
-          const connection = {
-            accessToken: data.access_token,
-            repoOwner: data.user?.login || "",
-            repoName: "", // Will be set when user creates first project
-            branch: "main"
-          }
-
-          // Persist to localStorage first
-          const storageKey = "github_connection_" + user.id
-          localStorage.setItem(storageKey, JSON.stringify(connection))
-          console.log("✓ GitHub connection saved to localStorage with key:", storageKey)
-
-          // Then set in store (this will trigger UI update)
-          setGitHubConnection(connection)
-          console.log("✓ GitHub connection set in store")
-
-          // Clean up state
-          sessionStorage.removeItem("github_oauth_state")
-
-          // Clean up URL
-          const newUrl = window.location.pathname + "?tab=projects"
-          window.history.replaceState({}, "", newUrl)
-          console.log("✓ URL cleaned up, redirected to projects tab")
-
-        } catch (error) {
-          console.error("Failed to exchange OAuth code:", error)
-          alert("Failed to connect GitHub: " + (error instanceof Error ? error.message : "Unknown error"))
-          sessionStorage.removeItem("github_oauth_state")
-
-          // Clean up URL even on error
-          const newUrl = window.location.pathname + "?tab=projects"
-          window.history.replaceState({}, "", newUrl)
-        }
-      }
-
-      exchangeToken()
-    }
-  }, [user, loading, setGitHubConnection])
 
   const handleImportToProject = async (projectId: string) => {
     if (!assetToImport || !user) return
@@ -597,7 +388,7 @@ export function Dashboard() {
         project.name,
         filePath,
         newUrl,
-        githubConnection as GitHubConnectionInput | null
+        null
       )
 
       alert(
@@ -635,19 +426,27 @@ export function Dashboard() {
       switch (itemToDelete.type) {
         case "image":
           await deleteImage(itemToDelete.id, itemToDelete.dbId)
-          setUserImages(userImages.filter(img => img.id !== itemToDelete.id))
+          const newImages = userImages.filter(img => img.id !== itemToDelete.id)
+          setUserImages(newImages)
+          if (globalAssetsCache) globalAssetsCache.images = newImages
           break
         case "model":
           await deleteModel(itemToDelete.id, itemToDelete.dbId)
-          setUserModels(userModels.filter(model => model.id !== itemToDelete.id))
+          const newModels = userModels.filter(model => model.id !== itemToDelete.id)
+          setUserModels(newModels)
+          if (globalAssetsCache) globalAssetsCache.models = newModels
           break
         case "video":
           await deleteVideo(itemToDelete.id, itemToDelete.dbId)
-          setUserVideos(userVideos.filter(video => video.id !== itemToDelete.id))
+          const newVideos = userVideos.filter(video => video.id !== itemToDelete.id)
+          setUserVideos(newVideos)
+          if (globalAssetsCache) globalAssetsCache.videos = newVideos
           break
         case "audio":
           await deleteAudio(itemToDelete.id, itemToDelete.dbId)
-          setUserAudio(userAudio.filter(audio => audio.id !== itemToDelete.id))
+          const newAudio = userAudio.filter(audio => audio.id !== itemToDelete.id)
+          setUserAudio(newAudio)
+          if (globalAssetsCache) globalAssetsCache.audio = newAudio
           break
       }
       setShowDeleteConfirm(false)
@@ -780,59 +579,24 @@ export function Dashboard() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-background overflow-hidden font-mono">
-      {/* Top Header with Logo and Builder Button */}
-      <div className="border-b border-border px-6 py-4 flex items-center justify-between shrink-0 bg-background text-foreground">
-        <div className="flex items-center gap-3 relative">
-          <img
-            src={theme === "dark" ? appIconDark : appIconLight}
-            alt="KOYE AI"
-            className="h-12 w-12 object-contain"
-          />
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-foreground font-mono">
-              KOYE<span className="font-extrabold">_</span>AI
-            </h1>
-            <p className="text-xs text-muted-foreground mt-0.5 font-mono">
-              AI game builder
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-4">
-          <ThemeToggle />
-          <button
-            onClick={handleBuilder}
-            className="px-4 py-2 bg-background text-foreground hover:bg-muted font-mono text-xs font-bold border-2 border-foreground shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor] transition-all"
-          >
-            $ builder
-          </button>
-        </div>
-      </div>
-
+    <div className="flex flex-col h-full w-full bg-background overflow-hidden font-mono relative">
       {/* Main Content Area with Sidebar */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar */}
         <div
           className={cn(
-            "bg-background border-r border-border transition-all duration-300 flex flex-col",
-            isSidebarCollapsed ? "w-20" : "w-64"
+            "bg-background border-r border-border transition-all duration-300 flex flex-col z-10",
+            !isSidebarOpen ? "w-0 overflow-hidden border-none mx-0" : "w-64"
           )}
         >
-          {/* Sidebar Toggle Button */}
+          {/* Sidebar Toggle Button Area (Optional if using only main header button) */}
           <div className="p-4 border-b border-border flex items-center justify-between">
-            {!isSidebarCollapsed && (
-              <span className="text-sm font-bold text-foreground">Dashboard</span>
-            )}
+            <span className="text-sm font-bold text-foreground">Dashboard</span>
             <button
-              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+              onClick={() => setIsSidebarOpen(false)}
               className="p-1 hover:bg-muted rounded border border-border"
             >
-              <ChevronLeft
-                className={cn(
-                  "h-4 w-4 text-foreground transition-transform",
-                  isSidebarCollapsed && "rotate-180"
-                )}
-              />
+              <ChevronLeft className="h-4 w-4 text-foreground transition-transform" />
             </button>
           </div>
 
@@ -843,7 +607,7 @@ export function Dashboard() {
                 label="Explore"
                 active={activeTab === "explore"}
                 onClick={() => setActiveTab("explore")}
-                collapsed={isSidebarCollapsed}
+                collapsed={!isSidebarOpen}
                 number="1"
               />
               <NavItem
@@ -851,7 +615,7 @@ export function Dashboard() {
                 label="Profile"
                 active={activeTab === "profile"}
                 onClick={() => setActiveTab("profile")}
-                collapsed={isSidebarCollapsed}
+                collapsed={!isSidebarOpen}
                 number="2"
               />
               <NavItem
@@ -859,7 +623,7 @@ export function Dashboard() {
                 label="Usage"
                 active={activeTab === "usage"}
                 onClick={() => setActiveTab("usage")}
-                collapsed={isSidebarCollapsed}
+                collapsed={!isSidebarOpen}
                 number="3"
               />
               <NavItem
@@ -867,7 +631,7 @@ export function Dashboard() {
                 label="Projects"
                 active={activeTab === "projects"}
                 onClick={() => setActiveTab("projects")}
-                collapsed={isSidebarCollapsed}
+                collapsed={!isSidebarOpen}
                 number="4"
               />
               <NavItem
@@ -875,7 +639,7 @@ export function Dashboard() {
                 label="Features"
                 active={activeTab === "features"}
                 onClick={() => setActiveTab("features")}
-                collapsed={isSidebarCollapsed}
+                collapsed={!isSidebarOpen}
                 number="5"
               />
               <NavItem
@@ -883,89 +647,26 @@ export function Dashboard() {
                 label="Accounts"
                 active={activeTab === "accounts"}
                 onClick={() => setActiveTab("accounts")}
-                collapsed={isSidebarCollapsed}
+                collapsed={!isSidebarOpen}
                 number="6"
-              />
-            </div>
-
-            {/* Resources */}
-            <div className="space-y-1 mb-6">
-              <div className="text-xs text-muted-foreground mb-2 px-2">RESOURCES</div>
-              <NavItem
-                icon={Grid3x3}
-                label="Feed"
-                collapsed={isSidebarCollapsed}
-                number="7"
-              />
-              <NavItem
-                icon={MessageSquare}
-                label="Thoughts"
-                collapsed={isSidebarCollapsed}
-                number="8"
-              />
-              <NavItem
-                icon={Layers}
-                label="Stack"
-                collapsed={isSidebarCollapsed}
-                number="9"
-              />
-            </div>
-
-            {/* Connect */}
-            <div className="space-y-1 mb-6">
-              <div className="text-xs text-muted-foreground mb-2 px-2">CONNECT</div>
-              <NavItem
-                icon={Mail}
-                label="Contact"
-                collapsed={isSidebarCollapsed}
-                badge="AC"
-              />
-              <NavItem
-                icon={MessageSquare}
-                label="Twitter"
-                collapsed={isSidebarCollapsed}
-                badge="→"
-              />
-              <NavItem
-                icon={MessageSquare}
-                label="LinkedIn"
-                collapsed={isSidebarCollapsed}
-                badge="→"
-              />
-              <NavItem
-                icon={MessageSquare}
-                label="YouTube"
-                collapsed={isSidebarCollapsed}
-                badge="→"
               />
             </div>
           </div>
 
           {/* Bottom Section */}
-          <div className="p-4 border-t border-border space-y-2">
+          <div className="p-4 border-t border-border space-y-2 mt-auto">
             <button
               onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-3 py-2 text-foreground hover:bg-muted rounded border border-border transition-colors"
+              className="w-full flex items-center gap-3 px-3 py-2 text-foreground hover:bg-muted rounded border border-border transition-colors justify-between"
             >
-              <LogOut className="h-4 w-4" />
-              {!isSidebarCollapsed && <span className="text-sm">Logout</span>}
-              {!isSidebarCollapsed && <span className="ml-auto text-xs">X</span>}
+              <div className="flex items-center gap-3">
+                <LogOut className="h-4 w-4" />
+                <span className={cn("text-sm", !isSidebarOpen && "hidden")}>Logout</span>
+              </div>
             </button>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder={isSidebarCollapsed ? "Q" : "Q Search..."}
-                className="w-full pl-10 pr-3 py-2 bg-background border border-border rounded text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0"
-              />
-              {!isSidebarCollapsed && (
-                <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs text-muted-foreground">
-                  S
-                </span>
-              )}
-            </div>
           </div>
         </div>
+
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col bg-background overflow-hidden">
@@ -1130,6 +831,8 @@ export function Dashboard() {
                                 <img
                                   src={image.url}
                                   alt={imageTitle}
+                                  loading="lazy"
+                                  decoding="async"
                                   className="w-full h-48 object-cover bg-muted"
                                 />
                                 <div className="absolute inset-0 bg-transparent group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
@@ -1255,6 +958,7 @@ export function Dashboard() {
                                 muted
                                 loop
                                 playsInline
+                                preload="metadata"
                               />
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
                                 <Maximize2 className="h-6 w-6 text-white" />
@@ -1953,36 +1657,9 @@ export function Dashboard() {
                   <div className="flex items-center justify-between mb-6">
                     <h2 className="text-2xl font-bold text-foreground font-mono">$ projects</h2>
                     <div className="flex items-center gap-2">
-                      {githubConnection && githubConnection.accessToken ? (
-                        <div className="flex items-center gap-2 px-3 py-1 bg-green-100 dark:bg-green-900 border border-green-600 rounded text-green-800 dark:text-green-100 text-sm font-mono">
-                          <Github className="h-4 w-4" />
-                          <span>Connected</span>
-                        </div>
-                      ) : (
-                        <Button
-                          onClick={handleConnectGitHub}
-                          className="bg-foreground text-background hover:bg-muted-foreground border border-foreground font-mono"
-                        >
-                          <Github className="h-4 w-4 mr-2" />
-                          Connect GitHub
-                        </Button>
-                      )}
                       <Button
-                        onClick={() => {
-                          if (!githubConnection || !githubConnection.accessToken) {
-                            alert("Please connect your GitHub account first to create projects.")
-                            handleConnectGitHub()
-                            return
-                          }
-                          setShowProjectDialog(true)
-                        }}
-                        className={cn(
-                          "border-2 border-foreground font-mono text-xs font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]",
-                          githubConnection && githubConnection.accessToken
-                            ? "bg-foreground text-background hover:bg-muted-foreground"
-                            : "bg-muted text-muted-foreground cursor-not-allowed"
-                        )}
-                        disabled={!githubConnection || !githubConnection.accessToken}
+                        onClick={() => setShowProjectDialog(true)}
+                        className="border-2 border-foreground font-mono text-xs font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor] bg-foreground text-background hover:bg-muted-foreground"
                       >
                         <Plus className="h-4 w-4 mr-2" />
                         ADD PROJECT
@@ -1998,28 +1675,13 @@ export function Dashboard() {
                     <div className="border-2 border-dashed border-border p-12 text-center">
                       <p className="text-foreground/70 font-mono mb-4">No projects yet</p>
                       <p className="text-muted-foreground text-sm font-mono mb-6">Create your first project to start building</p>
-                      {!githubConnection || !githubConnection.accessToken ? (
-                        <div className="flex flex-col items-center gap-4">
-                          <p className="text-foreground/70 text-sm font-mono text-center">
-                            Connect your GitHub account to create projects
-                          </p>
-                          <Button
-                            onClick={handleConnectGitHub}
-                            className="bg-foreground text-background hover:bg-muted-foreground border border-foreground font-mono"
-                          >
-                            <Github className="h-4 w-4 mr-2" />
-                            Connect GitHub
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          onClick={() => setShowProjectDialog(true)}
-                          className="bg-foreground text-background hover:bg-muted-foreground border-2 border-foreground font-mono text-xs font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
-                        >
-                          <Plus className="h-4 w-4 mr-2" />
-                          CREATE PROJECT
-                        </Button>
-                      )}
+                      <Button
+                        onClick={() => setShowProjectDialog(true)}
+                        className="bg-foreground text-background hover:bg-muted-foreground border-2 border-foreground font-mono text-xs font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        CREATE PROJECT
+                      </Button>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -2229,32 +1891,7 @@ export function Dashboard() {
                 </button>
               </div>
 
-              {/* GitHub Connection Check */}
-              {(!githubConnection || !githubConnection.accessToken) && (
-                <div className="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-600 rounded">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                      <p className="text-yellow-800 dark:text-yellow-200 text-sm font-mono font-bold mb-1">
-                        GitHub Connection Required
-                      </p>
-                      <p className="text-yellow-700 dark:text-yellow-300 text-xs font-mono mb-3">
-                        You need to connect your GitHub account to create projects.
-                      </p>
-                      <Button
-                        onClick={() => {
-                          setShowProjectDialog(false)
-                          handleConnectGitHub()
-                        }}
-                        className="bg-yellow-600 text-white hover:bg-yellow-700 border border-yellow-600 font-mono text-xs"
-                      >
-                        <Github className="h-3 w-3 mr-2" />
-                        Connect GitHub
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )}
+
 
               <div className="space-y-4">
                 <div>
@@ -2285,7 +1922,7 @@ export function Dashboard() {
                 <div className="flex gap-2">
                   <Button
                     onClick={handleCreateProject}
-                    disabled={!newProjectName.trim() || !githubConnection || !githubConnection.accessToken}
+                    disabled={!newProjectName.trim()}
                     className="flex-1 bg-foreground text-background hover:bg-foreground/90 border border-foreground font-mono disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Create & Open
@@ -2377,16 +2014,7 @@ export function Dashboard() {
         )
       }
 
-      {/* GitHub Connection Prompt Modal */}
-      {showGitHubPrompt && (
-        <GitHubConnectionPrompt
-          onClose={() => setShowGitHubPrompt(false)}
-          onConnected={() => {
-            setShowGitHubPrompt(false)
-            setShowProjectDialog(true)
-          }}
-        />
-      )}
+
 
       {/* Project Creation Loading Overlay */}
       {isCreatingProject && (

@@ -1,3 +1,4 @@
+import { Check, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useParams, useSearchParams } from "react-router-dom"
 import iconJpg from "../assets/icon.jpg"
@@ -8,19 +9,31 @@ import { BuilderWelcomeModal } from "../components/builder/BuilderWelcomeModal"
 import { ImageEditForm } from "../components/builder/ImageEditForm"
 import { UnifiedViewer } from "../components/ui/UnifiedViewer"
 import { useAuth } from "../hooks/useAuth"
-import { loadProjectFilesFromStorage, saveProjectFilesToStorage } from "../services/projectFiles"
+import { deleteProjectFile, loadProjectFilesFromStorage, saveProjectFilesToStorage } from "../services/projectFiles"
 import { useAppStore } from "../store/useAppStore"
 import { detectFileType } from "../utils/fileTypeDetection"
+import { bulkSaveVFS } from "../services/vfs"
 
 type HistoryState = {
     files: Record<string, string>
     timestamp: number
 }
 
-export function Builder() {
-    const { projectId } = useParams()
+// Upload overlay state type
+export interface UploadFileStatus {
+    name: string
+    status: 'pending' | 'reading' | 'uploading' | 'success' | 'failed'
+    error?: string
+}
+
+export interface UploadOverlayState {
+    isUploading: boolean
+    files: UploadFileStatus[]
+}
+
+export function Builder({ projectId: propsProjectId, projectName: propsProjectName }: { projectId?: string, projectName?: string } = {}) {
+    const { projectId: routeProjectId } = useParams()
     const [searchParams] = useSearchParams()
-    const projectName = searchParams.get("name") || "Untitled Project"
     const { user } = useAuth()
 
     const {
@@ -31,7 +44,11 @@ export function Builder() {
         githubConnection,
         isImageEditMode,
         setIsImageEditMode,
+        currentProject,
     } = useAppStore()
+
+    const projectId = propsProjectId || routeProjectId || currentProject?.id
+    const projectName = propsProjectName || searchParams.get("name") || currentProject?.name || "Untitled Project"
 
     // Undo/Redo history
     const historyRef = useRef<HistoryState[]>([])
@@ -44,6 +61,12 @@ export function Builder() {
     const [_isSaving, setIsSaving] = useState(false)
     const [_lastSaved, setLastSaved] = useState<Date | null>(null)
     const [showWelcome, setShowWelcome] = useState(false)
+
+    // Upload overlay state — controlled by BuilderSidebar, rendered here
+    const [uploadState, setUploadState] = useState<UploadOverlayState | null>(null)
+
+    // Track last-saved file contents to only sync changed files
+    const lastSavedFilesRef = useRef<Record<string, string>>({})
 
     // Save current state to history
     const saveToHistory = () => {
@@ -130,38 +153,50 @@ export function Builder() {
         const fileTypeInfo = detectFileType(path)
         const fileName = path.split('/').pop() || path
 
-        // Logic similar to LeftSidebar to ensure complete asset data
-        let assetData = data
+        // Always get the latest content from generatedFiles
+        const currentContent = generatedFiles[path]
 
-        if (!assetData) {
-            // Get content from generatedFiles if it exists
-            const content = generatedFiles[path]
+        // Determine type based on file detection
+        let assetType = fileTypeInfo.category
 
-            // Determine type based on file detection
-            let assetType = fileTypeInfo.category
-            if (assetType === 'text') {
-                assetType = 'code' // Treat text files as code for display
-            }
+        // Special case: check if it's a folder (no content and exists as prefix)
+        if (currentContent === undefined) {
+             const isFolder = Object.keys(generatedFiles).some(p => p.startsWith(path + '/'))
+             if (isFolder) {
+                 assetType = 'folder' as any
+             }
+        }
 
-            assetData = {
-                name: fileName,
-                path: path,
-                type: assetType === 'unknown' ? 'code' : assetType,
-                content: content,
-                url: content && (content.startsWith('http') || content.startsWith('data:')) ? content : undefined
-            }
-        } else {
-            // Ensure assetData has all required fields
-            assetData = {
-                ...assetData,
-                name: assetData.name || fileName,
-                path: assetData.path || path,
-                type: assetData.type || (fileTypeInfo.category === 'unknown' ? 'code' : fileTypeInfo.category),
-                content: assetData.content || generatedFiles[path]
+        if (assetType === 'text') {
+            assetType = 'code' // Treat text files as code for display
+        }
+
+        // Resolve the URL from the actual content (covers data URLs, http URLs, blob URLs)
+        let resolvedUrl: string | undefined = currentContent && (
+            currentContent.startsWith('data:') ||
+            currentContent.startsWith('http') ||
+            currentContent.startsWith('blob:')
+        ) ? currentContent : undefined
+
+        // Fallback: if content is markdown metadata (legacy), try to extract URL from it
+        if (!resolvedUrl && currentContent && fileTypeInfo.isBinary) {
+            const urlMatch = currentContent.match(/\**URL:\*\*\s*(https?:\/\/[^\s\n*)]+)/i)
+                || currentContent.match(/# URL:\s*(https?:\/\/[^\s\n]+)/i)
+                || currentContent.match(/(https?:\/\/[^\s\n*)]+)/i)
+            if (urlMatch) {
+                resolvedUrl = urlMatch[1]
             }
         }
 
-
+        // Build the asset data, merging any provided data with resolved values
+        const assetData = {
+            ...(data || {}),
+            name: (data?.name) || fileName,
+            path: (data?.path) || path,
+            type: (data?.type) || (assetType === 'unknown' ? 'code' : assetType),
+            content: currentContent,
+            url: resolvedUrl || (data?.url) // Prefer freshly resolved URL
+        }
 
         setSelectedAsset(assetData)
     }
@@ -171,7 +206,17 @@ export function Builder() {
         // This callback can be used for other side effects if needed
     }
 
-    // Auto-save function
+    // Called by BuilderSidebar after a file is immediately synced (upload, create, delete)
+    const handleFileSynced = useCallback((path: string, content: string | null) => {
+        if (content === null) {
+            // File was deleted — remove from snapshot so auto-save doesn't re-upload
+            delete lastSavedFilesRef.current[path]
+        } else {
+            lastSavedFilesRef.current[path] = content
+        }
+    }, [])
+
+    // Auto-save function — only saves files that have CHANGED since last save
     const autoSave = useCallback(async () => {
         if (!projectId || !user) return
 
@@ -187,48 +232,51 @@ export function Builder() {
                 return
             }
 
-            // Save to localStorage as backup (keyed by projectId)
-            // Filter out large files (data URLs, images) to avoid quota errors
-            try {
-                const storageKey = `project_${projectId}_files`
-                const filteredFiles: Record<string, string> = {}
-
-                for (const [path, content] of Object.entries(currentFiles || {})) {
-                    // Skip large data URLs (images, etc.) - they're already in Supabase
-                    if (content && (
-                        content.startsWith('data:image') ||
-                        content.startsWith('data:video') ||
-                        content.startsWith('data:audio') ||
-                        content.length > 100000 // Skip files larger than 100KB
-                    )) {
-                        // Store just a reference marker instead
-                        filteredFiles[path] = `[STORED_IN_DB:${content.length}]`
-                    } else {
-                        filteredFiles[path] = content
-                    }
+            // Find files that have actually changed since last save
+            const changedFiles: Record<string, string> = {}
+            for (const [path, content] of Object.entries(currentFiles)) {
+                if (lastSavedFilesRef.current[path] !== content) {
+                    changedFiles[path] = content
                 }
-
-                localStorage.setItem(storageKey, JSON.stringify({
-                    files: filteredFiles,
-                    timestamp: Date.now(),
-                    projectName: projectName
-                }))
-            } catch (storageError) {
-                // Quota exceeded - just skip localStorage, data is in Supabase anyway
-                console.warn('localStorage quota exceeded, skipping local backup')
             }
 
-            // Save to GitHub or Supabase (this is the primary storage)
+            // Detect files that were DELETED (exist in snapshot but not in current)
+            const deletedPaths: string[] = []
+            for (const path of Object.keys(lastSavedFilesRef.current)) {
+                if (!(path in currentFiles)) {
+                    deletedPaths.push(path)
+                }
+            }
+
+            if (Object.keys(changedFiles).length === 0 && deletedPaths.length === 0) {
+                console.log('No changed files to auto-save')
+                setIsSaving(false)
+                return
+            }
+
+            console.log(`[auto-save] ${Object.keys(changedFiles).length} changed, ${deletedPaths.length} deleted`)
+
+            // Delete removed files from backend
+            for (const deletedPath of deletedPaths) {
+                deleteProjectFile(projectId, user.id, deletedPath, githubConnection)
+                    .then(() => console.log(`[auto-save] Deleted from backend: ${deletedPath}`))
+                    .catch(e => console.warn(`[auto-save] Delete failed for ${deletedPath}:`, e))
+            }
+
+            // Save ONLY changed files to storage (priority sync)
             await saveProjectFilesToStorage(
                 projectId,
                 user.id,
                 projectName,
-                currentFiles,
+                changedFiles,
                 githubConnection
             )
 
+            // Update snapshot to mark these files as saved
+            lastSavedFilesRef.current = { ...currentFiles }
+
             setLastSaved(new Date())
-            console.log('Auto-saved project files')
+            console.log('Auto-saved changed files')
         } catch (error) {
             console.error('Error auto-saving:', error)
         } finally {
@@ -278,78 +326,58 @@ export function Builder() {
     }, [generatedFiles, projectId, autoSave])
 
     const [isLoading, setIsLoading] = useState(true)
-    const hasLoadedRef = useRef(false)
+    const loadedProjectIdRef = useRef<string | null>(null)
 
-    // Load project files on mount (only once)
+    // Load project files on mount or project switch
+    // Storage is the SOLE source of truth — no localStorage merge
     useEffect(() => {
-        if (projectId && user && !hasLoadedRef.current) {
-            hasLoadedRef.current = true  // Mark as loaded to prevent re-running
+        if (projectId && user && loadedProjectIdRef.current !== projectId) {
+            loadedProjectIdRef.current = projectId  // Mark this project as loaded
+            
+            // Immediately clear the old project's files and history so they don't bleed over
+            setGeneratedFiles({})
+            lastSavedFilesRef.current = {}
+            historyRef.current = []
+            historyIndexRef.current = -1
+            setSelectedAsset(null)
+            setIsLoading(true)
+
             const loadFiles = async () => {
                 try {
-                    const storageKey = `project_${projectId}_files`
-                    const savedData = localStorage.getItem(storageKey)
-
-                    // PRIORITY 1: Use localStorage if available (most recent session state)
-                    // This preserves deletions and renames from the current/last session
-                    if (savedData) {
-                        try {
-                            const parsed = JSON.parse(savedData)
-                            if (parsed.files && Object.keys(parsed.files).length > 0) {
-                                console.log('Loading from localStorage (session state)', Object.keys(parsed.files).length, 'files')
-                                setGeneratedFiles(parsed.files)
-                                if (parsed.timestamp) {
-                                    setLastSaved(new Date(parsed.timestamp))
-                                }
-                                setIsLoading(false)
-                                return // Use localStorage, don't load from DB
-                            }
-                        } catch (error) {
-                            console.error('Error parsing localStorage:', error)
-                        }
-                    }
-
-                    // PRIORITY 2: Load from DB (fallback for first load or no local data)
-                    console.log('Loading from database...')
-
-                    // Fetch all files directly - deletions are now handled immediately via service role
-                    // No need for settings.koye based filtering anymore
+                    // Fetch from storage — this is the only source of truth
+                    console.log(`Loading project files for ${projectId} from storage...`)
                     const dbFiles = await loadProjectFilesFromStorage(
                         projectId,
                         user.id,
                         githubConnection
                     )
 
-                    if (Object.keys(dbFiles).length > 0) {
-                        console.log('Loaded', Object.keys(dbFiles).length, 'files from database')
+                    const finalFiles = Object.fromEntries(
+                        Object.entries(dbFiles).filter(([path]) => !path.includes('.settings.koye'))
+                    )
 
-                        // Filter out any .settings.koye files that may exist from old versions
-                        const cleanFiles = Object.fromEntries(
-                            Object.entries(dbFiles).filter(([path]) => !path.includes('.settings.koye'))
-                        )
-
-                        setGeneratedFiles(cleanFiles)
+                    if (Object.keys(finalFiles).length > 0) {
+                        console.log('Loaded', Object.keys(finalFiles).length, 'files from storage')
+                        setGeneratedFiles(finalFiles)
+                        // Set the snapshot so auto-save doesn't re-upload everything
+                        lastSavedFilesRef.current = { ...finalFiles }
                         setLastSaved(new Date())
                     } else {
-                        console.log('No files found in database')
+                        console.log('No files found in storage')
+                        setGeneratedFiles({})
+                    }
+
+                    // Update VFS backup (replaces localStorage to avoid 5MB limit and UI lag)
+                    if (projectId && Object.keys(finalFiles).length > 0) {
+                        try {
+                            await bulkSaveVFS(projectId, finalFiles)
+                            console.log(`✓ Backed up ${Object.keys(finalFiles).length} files to VFS (IndexedDB)`)
+                        } catch (vfsError) {
+                            console.warn('Failed to backup to VFS:', vfsError)
+                        }
                     }
                 } catch (error) {
                     console.error('Error loading project files:', error)
-                    // Final fallback to localStorage
-                    const storageKey = `project_${projectId}_files`
-                    const savedData = localStorage.getItem(storageKey)
-                    if (savedData) {
-                        try {
-                            const parsed = JSON.parse(savedData)
-                            if (parsed.files && Object.keys(parsed.files).length > 0) {
-                                setGeneratedFiles(parsed.files)
-                                if (parsed.timestamp) {
-                                    setLastSaved(new Date(parsed.timestamp))
-                                }
-                            }
-                        } catch (err) {
-                            console.error('Error loading from localStorage:', err)
-                        }
-                    }
                 } finally {
                     // Add a small delay to show the animation
                     setTimeout(() => setIsLoading(false), 1500)
@@ -357,11 +385,11 @@ export function Builder() {
             }
 
             loadFiles()
-        } else {
+        } else if (!projectId) {
             setIsLoading(false)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectId, user?.id])  // Only depend on projectId and user.id, hasLoadedRef prevents re-runs
+    }, [projectId, user?.id])  // Dependency on projectId triggers reload on switch
 
     // Listen for real-time sync from chat
     useEffect(() => {
@@ -376,37 +404,13 @@ export function Builder() {
                 try {
                     const parsed = JSON.parse(syncData)
 
-                    // Only sync if we have valid files data
-                    if (!parsed.files || typeof parsed.files !== 'object') {
-                        return
-                    }
-
-                    const currentFiles = useAppStore.getState().generatedFiles || {}
-
                     // Only update if timestamp is newer
                     const lastCheck = localStorage.getItem(`${syncKey}_lastCheck`)
                     const lastCheckTime = lastCheck ? parseInt(lastCheck) : 0
 
                     if (parsed.timestamp > lastCheckTime) {
-                        // MERGE files instead of replacing - chat adds files, doesn't overwrite
-                        // Only add new files from chat that don't exist locally
-                        const newFiles = { ...currentFiles }
-                        let hasNewFiles = false
-
-                        for (const [path, content] of Object.entries(parsed.files)) {
-                            if (!currentFiles[path]) {
-                                newFiles[path] = content as string
-                                hasNewFiles = true
-                                console.log('Builder: Adding file from chat:', path)
-                            }
-                        }
-
-                        if (hasNewFiles) {
-                            console.log('Builder: Merged new files from chat')
-                            isUndoRedoRef.current = true // Prevent adding to undo history
-                            setGeneratedFiles(newFiles)
-                        }
-
+                        console.log('Builder: Received sync signal from chat')
+                        // We rely on useAppStore for global state, no need to merge via localStorage
                         localStorage.setItem(`${syncKey}_lastCheck`, parsed.timestamp.toString())
                     }
                 } catch (error) {
@@ -458,7 +462,7 @@ export function Builder() {
             let imgUrl = (selectedAsset as any).url || (selectedAsset as any).content
             if (assetPath && files[assetPath]) {
                 const fc = files[assetPath]
-                if (fc.startsWith('http') || fc.startsWith('data:image') || fc.startsWith('blob:')) {
+                if (fc.startsWith('http') || fc.startsWith('data:') || fc.startsWith('blob:')) {
                     imgUrl = fc
                 } else {
                     const urlMatch = fc.match(/\**URL:\**\s*(https?:\/\/[^\s\n*)]+)/i) || fc.match(/# URL:\s*(https?:\/\/[^\s\n]+)/i)
@@ -481,8 +485,9 @@ export function Builder() {
         }
         return <UnifiedViewer />
     }
+
     return (
-        <div className="flex flex-col h-screen bg-background overflow-hidden font-mono text-foreground">
+        <div className="flex flex-col h-full bg-background overflow-hidden font-mono text-foreground">
             <BuilderHeader
                 projectName={projectName}
                 onUndo={handleUndo}
@@ -500,11 +505,74 @@ export function Builder() {
                     onFileCreated={handleFileCreated}
                     projectId={projectId}
                     userId={user?.id}
+                    onFileSynced={handleFileSynced}
+                    onUploadStateChange={setUploadState}
                 />
 
-                {/* Middle - Viewer / Image Edit Form */}
+                {/* Middle - Viewer / Image Edit Form / Upload Overlay */}
                 <div className="flex-1 bg-muted/20 relative min-w-0 border-x-2 border-border">
                     {renderBuilderViewerArea()}
+
+                    {/* Upload to Project Overlay — covers the viewer area */}
+                    {uploadState && uploadState.isUploading && (
+                        <div className="absolute inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col items-center justify-center">
+                            <div className="max-w-md w-full p-8">
+                                <div className="flex flex-col items-center mb-8">
+                                    <div className="h-14 w-14 rounded-full overflow-hidden border-2 border-foreground bg-background animate-spin-think mb-4">
+                                        <img src={iconJpg} alt="Uploading..." className="h-full w-full object-cover" />
+                                    </div>
+                                    <h3 className="font-mono text-lg font-bold text-foreground">
+                                        UPLOADING TO PROJECT
+                                    </h3>
+                                    <p className="font-mono text-xs text-muted-foreground mt-1">
+                                        Syncing files to your project
+                                    </p>
+                                </div>
+
+                                <div className="space-y-3 border-2 border-border p-4 bg-background">
+                                    {uploadState.files.map((file, idx) => (
+                                        <div key={idx} className="flex items-center gap-3 font-mono text-xs">
+                                            <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                                                {file.status === 'pending' && (
+                                                    <div className="h-2 w-2 rounded-full bg-muted-foreground" />
+                                                )}
+                                                {file.status === 'reading' && (
+                                                    <div className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full" />
+                                                )}
+                                                {file.status === 'uploading' && (
+                                                    <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full" />
+                                                )}
+                                                {file.status === 'success' && (
+                                                    <Check className="h-4 w-4 text-green-600" />
+                                                )}
+                                                {file.status === 'failed' && (
+                                                    <X className="h-4 w-4 text-red-600" />
+                                                )}
+                                            </div>
+                                            <span className="truncate text-foreground flex-1">{file.name}</span>
+                                            <span className="text-muted-foreground shrink-0">
+                                                {file.status === 'pending' && 'Waiting...'}
+                                                {file.status === 'reading' && 'Reading...'}
+                                                {file.status === 'uploading' && 'Uploading...'}
+                                                {file.status === 'success' && 'Uploaded ✓'}
+                                                {file.status === 'failed' && 'Failed ✗'}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Progress bar */}
+                                <div className="mt-4 h-2 bg-muted rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-foreground transition-all duration-500"
+                                        style={{
+                                            width: `${((uploadState.files.filter(f => f.status === 'success' || f.status === 'failed').length) / Math.max(uploadState.files.length, 1)) * 100}%`
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Right Sidebar - Inspector */}

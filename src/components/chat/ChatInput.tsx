@@ -1,5 +1,6 @@
-import { ArrowUp, File, FolderClosed, Mic, Plus, Square, X } from "lucide-react"
+import { ArrowUp, File, FolderClosed, Mic, Plus, Square, X, Paperclip, AtSign, Film, FileText } from "lucide-react"
 import React, { useEffect, useRef, useState } from "react"
+import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "../../lib/utils"
 import { useAppStore } from "../../store/useAppStore"
 import { TaskBar } from "../tasks/TaskBar"
@@ -24,10 +25,12 @@ export function ChatInput({ onSend, onStop, disabled, isGenerating }: ChatInputP
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [suggestionSearch, setSuggestionSearch] = useState("")
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0)
+  const [showPlusMenu, setShowPlusMenu] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const suggestionsRef = useRef<HTMLDivElement>(null)
+  const plusMenuRef = useRef<HTMLDivElement>(null)
 
   // Get available files and folders from project
   const availableFiles = React.useMemo(() => {
@@ -268,31 +271,71 @@ export function ChatInput({ onSend, onStop, disabled, isGenerating }: ChatInputP
       if (suggestionsRef.current && !suggestionsRef.current.contains(event.target as Node)) {
         setShowSuggestions(false)
       }
+      if (plusMenuRef.current && !plusMenuRef.current.contains(event.target as Node)) {
+        setShowPlusMenu(false)
+      }
     }
 
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  const triggerMentionMenu = () => {
+    setShowPlusMenu(false)
+    if (!editorRef.current) return
+    editorRef.current.focus()
+
+    // Insert @ at current cursor
+    const selection = window.getSelection()
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0)
+      const textNode = document.createTextNode('@')
+      range.insertNode(textNode)
+      range.setStartAfter(textNode)
+      range.setEndAfter(textNode)
+      selection.removeAllRanges()
+      selection.addRange(range)
+    } else {
+      editorRef.current.innerText += '@'
+    }
+
+    // Programmatically trigger the suggestions dropdown showing all files instantly
+    setSuggestionSearch("")
+    setShowSuggestions(true)
+    setSelectedSuggestionIndex(0)
+  }
+
   return (
     <div className="space-y-2 mb-[15px]">
       {images.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1">
-          {images.map((img, idx) => (
-            <div key={idx} className="relative shrink-0 group">
-              <PixelImage
-                src={URL.createObjectURL(img)}
-                alt={`Preview ${idx + 1}`}
-                className="h-16 w-16 rounded-lg border border-black shadow-md"
-              />
-              <button
-                onClick={() => removeImage(idx)}
-                className="absolute -right-1 -top-1 rounded-full bg-background border border-border p-1 shadow-lg hover:bg-muted transition-all opacity-0 group-hover:opacity-100"
-              >
-                <X className="h-3 w-3 text-foreground" />
-              </button>
-            </div>
-          ))}
+          {images.map((img, idx) => {
+            const isImage = img.type.startsWith('image/')
+            const isVideo = img.type.startsWith('video/')
+            
+            return (
+              <div key={idx} className="relative shrink-0 group flex flex-col items-center">
+                {isImage ? (
+                  <PixelImage
+                    src={URL.createObjectURL(img)}
+                    alt={`Preview ${idx + 1}`}
+                    className="h-16 w-16 rounded-lg border border-black shadow-md object-cover"
+                  />
+                ) : (
+                  <div className="h-16 w-16 rounded-lg border border-black shadow-md flex flex-col items-center justify-center bg-muted/80 text-muted-foreground p-1">
+                    {isVideo ? <Film className="h-6 w-6 mb-1 text-foreground" /> : <FileText className="h-6 w-6 mb-1 text-foreground" />}
+                    <span className="text-[8px] font-mono leading-tight truncate w-full text-center tracking-tighter" title={img.name}>{img.name}</span>
+                  </div>
+                )}
+                <button
+                  onClick={() => removeImage(idx)}
+                  className="absolute -right-1 -top-1 rounded-full bg-background border border-border p-1 shadow-lg hover:bg-muted transition-all opacity-0 group-hover:opacity-100"
+                >
+                  <X className="h-3 w-3 text-foreground" />
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -305,19 +348,56 @@ export function ChatInput({ onSend, onStop, disabled, isGenerating }: ChatInputP
           {/* Modern input bar with send button inside */}
           <div className="flex items-center gap-3 bg-background border border-border px-4 py-2.5 min-h-[52px] rounded-full shadow-sm focus-within:border-foreground/40 focus-within:shadow-md transition-all">
             {/* Plus Icon on left */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={disabled || isGenerating}
-              className="shrink-0 flex items-center justify-center w-8 h-8 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors disabled:opacity-50"
-              aria-label="Add attachment"
-            >
-              <Plus className="h-5 w-5" />
-            </button>
+            <div className="relative" ref={plusMenuRef}>
+              <button
+                onClick={() => setShowPlusMenu(!showPlusMenu)}
+                disabled={disabled || isGenerating}
+                className={cn(
+                  "shrink-0 flex items-center justify-center w-8 h-8 rounded-full transition-colors disabled:opacity-50",
+                  showPlusMenu ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                )}
+                aria-label="Add attachment"
+              >
+                <Plus className={cn("h-5 w-5 transition-transform", showPlusMenu && "rotate-45")} />
+              </button>
+
+              <AnimatePresence>
+                {showPlusMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute bottom-full left-0 mb-2 w-48 bg-background border border-border shadow-lg rounded-xl overflow-hidden z-50 py-1"
+                  >
+                    <button
+                      onClick={() => {
+                        fileInputRef.current?.click()
+                        setShowPlusMenu(false)
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors text-left"
+                    >
+                      <Paperclip className="h-4 w-4" />
+                      <span>Upload from Device</span>
+                    </button>
+                    {currentProject && (
+                      <button
+                        onClick={triggerMentionMenu}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors text-left"
+                      >
+                        <AtSign className="h-4 w-4" />
+                        <span>Mention Project File</span>
+                      </button>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,video/*,text/*,.md,.js,.ts,.jsx,.tsx,.html,.css,.json,.py"
               multiple
               onChange={handleImageSelect}
               className="hidden"

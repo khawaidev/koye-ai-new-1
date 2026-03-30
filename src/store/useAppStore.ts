@@ -60,8 +60,27 @@ interface AppState {
   mainViewMode: "chat" | "viewer"
   selectedAsset: Asset | null // For the viewer
   isImageEditMode: boolean // When true, builder shows image edit form instead of viewer
+  stage: string
+  isSidebarOpen: boolean
+  
+  // Generation History
+  generatedVideos: Array<{
+    predictionId: string;
+    url: string;
+    prompt: string;
+    status: "starting" | "processing" | "succeeded" | "failed";
+  }>
+  generatedAudio: Array<{
+    id: string;
+    url: string;
+    prompt: string;
+    status: "generating" | "succeeded" | "failed";
+    type?: "tts" | "sfx" | "music";
+    createdAt?: string;
+  }>
 
   // Actions
+  setStage: (stage: string) => void
   setCurrentProject: (project: Project | null) => void
   setCurrentAsset: (asset: Asset | null) => void
   setCurrentUserId: (userId: string | null) => void
@@ -97,6 +116,12 @@ interface AppState {
   // 3D Model specific state for Inspector
   modelGeometry: { vertices: number; faces: number } | null
   setModelGeometry: (geometry: { vertices: number; faces: number } | null) => void
+  setIsSidebarOpen: (isOpen: boolean) => void
+  setGeneratedVideos: (videos: AppState["generatedVideos"]) => void
+  addGeneratedVideo: (video: AppState["generatedVideos"][0]) => void
+  updateGeneratedVideo: (predictionId: string, updates: Partial<AppState["generatedVideos"][0]>) => void
+  setGeneratedAudio: (audio: AppState["generatedAudio"]) => void
+  addGeneratedAudio: (audio: AppState["generatedAudio"][0]) => void
 }
 
 // Helper functions for localStorage (user-specific)
@@ -253,7 +278,7 @@ export const useAppStore = create<AppState>((set, get) => {
     selectedModel: "fast",
 
     // Builder Mode State
-    isBuilderMode: false,
+    isBuilderMode: localStorage.getItem("koye_builder_mode") === "true",
     builderModeView: "chat",
     generatedFiles: {},
     githubConnection: null,
@@ -264,8 +289,29 @@ export const useAppStore = create<AppState>((set, get) => {
     selectedAsset: null,
     isImageEditMode: false,
     modelGeometry: null,
+    stage: localStorage.getItem("koye_current_stage") || "chat",
+    isSidebarOpen: false,
+    generatedVideos: [],
+    generatedAudio: [],
 
-    setCurrentProject: (project) => set({ currentProject: project }),
+    setStage: (stage) => {
+      localStorage.setItem("koye_current_stage", stage)
+      set({ stage })
+    },
+    setCurrentProject: (project) => {
+      const current = get().currentProject
+      if (current?.id !== project?.id) {
+        set({ 
+          currentProject: project,
+          generatedFiles: {},  // wipe old project files to prevent bleeding across screens
+          selectedAsset: null, // wipe stale UI selections
+          modelGeometry: null,
+          isImageEditMode: false
+        })
+      } else {
+        set({ currentProject: project })
+      }
+    },
     setCurrentAsset: (asset) => set({ currentAsset: asset }),
 
     setCurrentUserId: (userId) => {
@@ -508,7 +554,10 @@ export const useAppStore = create<AppState>((set, get) => {
     setSelectedModel: (selectedModel) => set({ selectedModel }),
 
     // Builder Mode Actions
-    setIsBuilderMode: (isBuilderMode) => set({ isBuilderMode }),
+    setIsBuilderMode: (isBuilderMode) => {
+      localStorage.setItem("koye_builder_mode", String(isBuilderMode))
+      set({ isBuilderMode })
+    },
     setBuilderModeView: (builderModeView) => set({ builderModeView }),
     addGeneratedFile: (path, content) => set((state) => ({
       generatedFiles: { ...state.generatedFiles, [path]: content }
@@ -522,5 +571,19 @@ export const useAppStore = create<AppState>((set, get) => {
     setSelectedAsset: (selectedAsset) => set({ selectedAsset }),
     setIsImageEditMode: (isImageEditMode) => set({ isImageEditMode }),
     setModelGeometry: (modelGeometry) => set({ modelGeometry }),
+    setIsSidebarOpen: (isSidebarOpen) => set({ isSidebarOpen }),
+    setGeneratedVideos: (generatedVideos) => set({ generatedVideos }),
+    addGeneratedVideo: (video) => set((state) => ({ 
+      generatedVideos: [video, ...state.generatedVideos] 
+    })),
+    updateGeneratedVideo: (predictionId, updates) => set((state) => ({
+      generatedVideos: state.generatedVideos.map((v) => 
+        v.predictionId === predictionId ? { ...v, ...updates } : v
+      )
+    })),
+    setGeneratedAudio: (generatedAudio) => set({ generatedAudio }),
+    addGeneratedAudio: (audio) => set((state) => ({ 
+      generatedAudio: [audio, ...state.generatedAudio] 
+    })),
   }
 })

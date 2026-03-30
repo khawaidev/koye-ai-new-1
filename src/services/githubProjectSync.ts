@@ -340,10 +340,11 @@ export async function deleteFileFromGitHub(
 ): Promise<boolean> {
     try {
         const githubPath = `projects/${projectId}/${filePath}`
+        const encodedPath = githubPath.split('/').map(encodeURIComponent).join('/')
 
         // First get the file SHA
         const getResponse = await fetch(
-            `${GITHUB_API_BASE}/repos/${repoOwner}/${repoName}/contents/${githubPath}?ref=${branch}`,
+            `${GITHUB_API_BASE}/repos/${repoOwner}/${repoName}/contents/${encodedPath}?ref=${branch}`,
             {
                 headers: {
                     Authorization: `token ${accessToken}`,
@@ -362,7 +363,7 @@ export async function deleteFileFromGitHub(
 
         // Delete the file
         const deleteResponse = await fetch(
-            `${GITHUB_API_BASE}/repos/${repoOwner}/${repoName}/contents/${githubPath}`,
+            `${GITHUB_API_BASE}/repos/${repoOwner}/${repoName}/contents/${encodedPath}`,
             {
                 method: 'DELETE',
                 headers: {
@@ -454,29 +455,18 @@ function isAssetFile(filePath: string): boolean {
 }
 
 /**
- * Check if a file is a code file that should be synced
+ * Check if a file should be synced to GitHub.
+ * Now treats ALL files as syncable except hidden/system settings files.
  */
 export function isCodeFile(filePath: string): boolean {
-    const codeExtensions = [
-        '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
-        '.html', '.css', '.scss', '.sass', '.less',
-        '.json', '.yml', '.yaml', '.toml',
-        '.md', '.txt', '.gitignore',
-        '.py', '.lua', '.cs', '.cpp', '.c', '.h',
-        '.sh', '.bat', '.ps1',
-        '.env.example', '.config'
-    ]
-    const lowerPath = filePath.toLowerCase()
-
-    // Check extension
-    if (codeExtensions.some(ext => lowerPath.endsWith(ext))) {
-        return true
+    // Exclude the hidden context/settings config file
+    if (filePath === '.koye-settings.json' || filePath.endsWith('/.koye-settings.json')) {
+        return false
     }
 
-    // Check common code filenames without extensions
-    const codeFileNames = ['Makefile', 'Dockerfile', 'Jenkinsfile', '.editorconfig', '.prettierrc', '.eslintrc']
-    const fileName = filePath.split('/').pop() || ''
-    return codeFileNames.includes(fileName)
+    // Return true for ALL files (images, models, audio, videos, text, code, etc)
+    // to ensure dragged-in assets correctly upload to GitHub
+    return true
 }
 
 /**

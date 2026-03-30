@@ -1,0 +1,100 @@
+
+
+
+## HERE ARE SOME FIXES AND CHANGES TO ME MADE TO THE WEB APP:
+
+
+1. while in any of these pages, image gen, video gen, 3d model gen,
+ audio gen, builder page, dashboard page, and when reloading,
+then it goes back to the main chatting interface,
+ however this should not be the case, as if i am in image gen page the when reload it,
+should be still in the image gen page etc [applies for other pages listed beforetoo].
+
+2.still:[ChatInput] Available files for autocomplete: ['uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png']
+ChatInput.tsx:43 [ChatInput] Available files for autocomplete: ['uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png']
+Builder.tsx:339 Loading project files for 9bda24f1-b86f-4ed0-ab27-80b44763f73b from storage...
+projectFiles.ts:88 Loaded 1 files from storage
+Builder.tsx:351 Loaded 1 files from storage
+Builder.tsx:365 ✓ Backed up 1 files to VFS (IndexedDB)
+Builder.tsx:403 Builder: Received sync signal from chat
+UnifiedViewer.tsx:22 [UnifiedViewer] Loading Asset: uploads
+UnifiedViewer.tsx:23 Type: code
+UnifiedViewer.tsx:24 Full Object: {name: 'uploads', path: 'uploads', type: 'code', content: undefined, url: undefined}
+UnifiedViewer.tsx:25 Status: {hasContent: false, hasUrl: false}
+UnifiedViewer.tsx:81 [UnifiedViewer] Rendering IMAGE from resolved URL: https://koye-r2-proxy.koye-ai.workers.dev/file/9bf3145f-748a-42dd-9f2c-59d555349850/projects/9bda24f1-b86f-4ed0-ab27-80b44763f73b/assets/uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png
+UnifiedViewer.tsx:81 [UnifiedViewer] Rendering IMAGE from resolved URL: https://koye-r2-proxy.koye-ai.workers.dev/file/9bf3145f-748a-42dd-9f2c-59d555349850/projects/9bda24f1-b86f-4ed0-ab27-80b44763f73b/assets/uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png
+UnifiedViewer.tsx:22 [UnifiedViewer] Loading Asset: uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png
+UnifiedViewer.tsx:23 Type: image
+UnifiedViewer.tsx:24 Full Object: {name: '0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png', path: 'uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png', content: 'https://koye-r2-proxy.koye-ai.workers.dev/file/9bf…/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png', url: 'https://koye-r2-proxy.koye-ai.workers.dev/file/9bf…/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png', type: 'image'}
+UnifiedViewer.tsx:25 Status: {hasContent: true, hasUrl: true}
+UnifiedViewer.tsx:27 URL Source: https://koye-r2-proxy.koye-ai.workers.dev/file/9bf3145f-748a-42dd-9f2c-59d555349850/projects/9bda24f1-b86f-4ed0-ab27-80b44763f73b/assets/uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png
+UnifiedViewer.tsx:81 [UnifiedViewer] Rendering IMAGE from resolved URL: https://koye-r2-proxy.koye-ai.workers.dev/file/9bf3145f-748a-42dd-9f2c-59d555349850/projects/9bda24f1-b86f-4ed0-ab27-80b44763f73b/assets/uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png
+UnifiedViewer.tsx:81 [UnifiedViewer] Rendering IMAGE from resolved URL: https://koye-r2-proxy.koye-ai.workers.dev/file/9bf3145f-748a-42dd-9f2c-59d555349850/projects/9bda24f1-b86f-4ed0-ab27-80b44763f73b/assets/uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png
+UnifiedViewer.tsx:81 [UnifiedViewer] Rendering IMAGE from resolved URL: https://koye-r2-proxy.koye-ai.workers.dev/file/9bf3145f-748a-42dd-9f2c-59d555349850/projects/9bda24f1-b86f-4ed0-ab27-80b44763f73b/assets/uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png
+UnifiedViewer.tsx:81 [UnifiedViewer] Rendering IMAGE from resolved URL: https://koye-r2-proxy.koye-ai.workers.dev/file/9bf3145f-748a-42dd-9f2c-59d555349850/projects/9bda24f1-b86f-4ed0-ab27-80b44763f73b/assets/uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png
+
+[when i click on the link it only shows: https://koye-r2-proxy.koye-ai.workers.dev/file/9bf3145f-748a-42dd-9f2c-59d555349850/projects/9bda24f1-b86f-4ed0-ab27-80b44763f73b/assets/uploads/0032fab1-803a-479e-bde5-be57c2f33b90]
+
+for another iamge i uploaded when i click on the link :https://koye-r2-proxy.koye-ai.workers.dev/file/9bf3145f-748a-42dd-9f2c-59d555349850/projects/f4e69dbc-0588-40af-a035-7989f974651a/assets/uploads/samurai.png, it says not found even if it had an extension
+
+3. and when i try to delete a file/folder from the builder page:
+
+✓ Deleted from R2: 9bf3145f-748a-42dd-9f2c-59d555349850/projects/f4e69dbc-0588-40af-a035-7989f974651a/assets/uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png
+projectFiles.ts:183 ✓ Deleted uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png from R2
+multiDbManager.ts:370 GoTrueClient@sb-vgtomykcrbvscepwmgft-auth-token:1 (2.81.1) 2026-03-26T18:06:38.286Z Multiple GoTrueClient instances detected in the same browser context. It is not an error, but this should be avoided as it may produce undefined behavior when used concurrently under the same storage key.
+_GoTrueClient @ GoTrueClient.ts:293
+SupabaseAuthClient @ SupabaseAuthClient.ts:6
+_initSupabaseAuthClient @ SupabaseClient.ts:359
+SupabaseClient @ SupabaseClient.ts:134
+createClient @ index.ts:46
+getServiceDb @ multiDbManager.ts:370
+deleteProjectFileDirectly @ supabase.ts:284
+deleteProjectFile @ projectFiles.ts:190
+await in deleteProjectFile
+handleDelete @ BuilderSidebar.tsx:488
+callCallback2 @ react-dom.development.js:4164
+invokeGuardedCallbackDev @ react-dom.development.js:4213
+invokeGuardedCallback @ react-dom.development.js:4277
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:4291
+executeDispatch @ react-dom.development.js:9041
+processDispatchQueueItemsInOrder @ react-dom.development.js:9073
+processDispatchQueue @ react-dom.development.js:9086
+dispatchEventsForPlugins @ react-dom.development.js:9097
+(anonymous) @ react-dom.development.js:9288
+batchedUpdates$1 @ react-dom.development.js:26179
+batchedUpdates @ react-dom.development.js:3991
+dispatchEventForPluginEventSystem @ react-dom.development.js:9287
+dispatchEventWithEnableCapturePhaseSelectiveHydrationWithoutDiscreteEventReplay @ react-dom.development.js:6465
+dispatchEvent @ react-dom.development.js:6457
+dispatchDiscreteEvent @ react-dom.development.js:6430
+
+fetch.ts:7  DELETE https://vgtomykcrbvscepwmgft.supabase.co/rest/v1/project_files?projectId=eq.f4e69dbc-0588-40af-a035-7989f974651a&path=eq.uploads%2F0032fab1-803a-479e-bde5-be57c2f33b90+%281%29+%281%29.png 400 (Bad Request)
+(anonymous) @ fetch.ts:7
+(anonymous) @ fetch.ts:34
+await in (anonymous)
+then @ PostgrestBuilder.ts:109
+supabase.ts:299 Failed to delete project file from DB: {code: '23502', details: 'Failing row contains (0b9da905-833e-4174-92cc-29b2…ull, null, 0, 2026-03-26 18:06:38.982772+00, []).', hint: null, message: 'null value in column "projectId" of relation "project_file_metadata" violates not-null constraint'}
+console.error @ index.tsx:86
+deleteProjectFileDirectly @ supabase.ts:299
+await in deleteProjectFileDirectly
+deleteProjectFile @ projectFiles.ts:190
+await in deleteProjectFile
+handleDelete @ BuilderSidebar.tsx:488
+callCallback2 @ react-dom.development.js:4164
+invokeGuardedCallbackDev @ react-dom.development.js:4213
+invokeGuardedCallback @ react-dom.development.js:4277
+invokeGuardedCallbackAndCatchFirstError @ react-dom.development.js:4291
+executeDispatch @ react-dom.development.js:9041
+processDispatchQueueItemsInOrder @ react-dom.development.js:9073
+processDispatchQueue @ react-dom.development.js:9086
+dispatchEventsForPlugins @ react-dom.development.js:9097
+(anonymous) @ react-dom.development.js:9288
+batchedUpdates$1 @ react-dom.development.js:26179
+batchedUpdates @ react-dom.development.js:3991
+dispatchEventForPluginEventSystem @ react-dom.development.js:9287
+dispatchEventWithEnableCapturePhaseSelectiveHydrationWithoutDiscreteEventReplay @ react-dom.development.js:6465
+dispatchEvent @ react-dom.development.js:6457
+dispatchDiscreteEvent @ react-dom.development.js:6430
+BuilderSidebar.tsx:489 Background delete completed: uploads/0032fab1-803a-479e-bde5-be57c2f33b90 (1) (1).png
+
+and it does not really delete, when i reload it comes back, check how the selet systems works for files and folders in the builder frontend and backend.

@@ -1,5 +1,6 @@
 import type { Audio, ChatSession, Image, Job, Model, Video } from "../types"
 import { cachedQuery, CacheKeys, CacheTTL, invalidateCacheByPrefix } from "./cache"
+import { deleteAssetFromR2, parseR2Url } from "./r2Storage"
 import { getMultiDbManager } from "./multiDbManager"
 
 /**
@@ -273,11 +274,18 @@ export async function deleteImage(imageId: string, dbId: string): Promise<void> 
 
   if (image?.url) {
     try {
-      const match = image.url.match(/\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/)
-      if (match) {
-        const bucket = match[1]
-        const path = decodeURIComponent(match[2])
-        await db.storage.from(bucket).remove([path])
+      // First check if it's an R2 URL
+      const r2Match = parseR2Url(image.url)
+      if (r2Match) {
+        await deleteAssetFromR2(r2Match.userId, r2Match.r2Key)
+      } else {
+        // Fallback to traditional Supabase storage
+        const match = image.url.match(/\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/)
+        if (match) {
+          const bucket = match[1]
+          const path = decodeURIComponent(match[2])
+          await db.storage.from(bucket).remove([path])
+        }
       }
     } catch (e) {
       console.warn("Failed to delete from storage:", e)
@@ -460,11 +468,16 @@ export async function deleteModel(modelId: string, dbId: string): Promise<void> 
 
   if (model?.url) {
     try {
-      const match = model.url.match(/\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/)
-      if (match) {
-        const bucket = match[1]
-        const path = decodeURIComponent(match[2])
-        await db.storage.from(bucket).remove([path])
+      const r2Match = parseR2Url(model.url)
+      if (r2Match) {
+        await deleteAssetFromR2(r2Match.userId, r2Match.r2Key)
+      } else {
+        const match = model.url.match(/\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/)
+        if (match) {
+          const bucket = match[1]
+          const path = decodeURIComponent(match[2])
+          await db.storage.from(bucket).remove([path])
+        }
       }
     } catch (e) {
       console.warn("Failed to delete from storage:", e)
@@ -743,11 +756,16 @@ export async function deleteVideo(videoId: string, dbId: string): Promise<void> 
 
   if (video?.url) {
     try {
-      const match = video.url.match(/\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/)
-      if (match) {
-        const bucket = match[1]
-        const path = decodeURIComponent(match[2])
-        await db.storage.from(bucket).remove([path])
+      const r2Match = parseR2Url(video.url)
+      if (r2Match) {
+        await deleteAssetFromR2(r2Match.userId, r2Match.r2Key)
+      } else {
+        const match = video.url.match(/\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/)
+        if (match) {
+          const bucket = match[1]
+          const path = decodeURIComponent(match[2])
+          await db.storage.from(bucket).remove([path])
+        }
       }
     } catch (e) {
       console.warn("Failed to delete from storage:", e)

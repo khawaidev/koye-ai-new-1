@@ -1,9 +1,6 @@
 import { User } from "lucide-react"
 import React from "react"
-import iconJpg from "../../assets/icon.jpg"
-import iconPng from "../../assets/icon.png"
 import { cn } from "../../lib/utils"
-import { useTheme } from "../theme-provider"
 
 interface VoiceChatLayoutProps {
   children: React.ReactNode
@@ -26,29 +23,12 @@ interface ChatAvatarProps {
   agentState?: "idle" | "thinking" | "speaking" | "listening"
 }
 
-export function ChatAvatar({ role, className, agentState = "idle" }: ChatAvatarProps) {
+export function ChatAvatar({ role, className }: ChatAvatarProps) {
   const isUser = role === "user"
-  const { theme } = useTheme()
 
-  // Determine animation class based on agentState
-  let animationClass = ""
   if (!isUser) {
-    switch (agentState) {
-      case "thinking":
-        animationClass = "animate-spin-think"
-        break
-      case "speaking":
-        animationClass = "animate-spin-fast"
-        break
-      case "idle":
-      default:
-        animationClass = "animate-spin-slow"
-        break
-    }
+    return null
   }
-
-  // Select icon based on theme
-  const aiIcon = theme === "dark" ? iconPng : iconJpg
 
   return (
     <div
@@ -57,15 +37,9 @@ export function ChatAvatar({ role, className, agentState = "idle" }: ChatAvatarP
         className
       )}
     >
-      {isUser ? (
-        <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-foreground bg-background text-foreground">
-          <User className="h-5 w-5" />
-        </div>
-      ) : (
-        <div className={cn("h-10 w-10 rounded-full overflow-hidden border-2 border-foreground bg-background", animationClass)}>
-          <img src={aiIcon} alt="AI" className="h-full w-full object-cover" />
-        </div>
-      )}
+      <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-foreground bg-background text-foreground">
+        <User className="h-5 w-5" />
+      </div>
     </div>
   )
 }

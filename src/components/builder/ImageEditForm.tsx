@@ -1,8 +1,9 @@
 import { Download, ImageIcon, Loader2, Send, Upload, X } from "lucide-react"
 import { useCallback, useRef, useState } from "react"
 import { cn } from "../../lib/utils"
-import { type HyperrealImageEditModel } from "../../services/hyperreal"
 import { useAppStore } from "../../store/useAppStore"
+import { editImageWithRunway } from "../../services/runwayml"
+import { editImageWithAicc } from "../../services/aicc"
 
 interface ImageEditFormProps {
     /** URL of the source image being edited */
@@ -19,7 +20,6 @@ export function ImageEditForm({ sourceImageUrl, sourceImageName, onClose }: Imag
     const [uploadedFile, setUploadedFile] = useState<File | null>(null)
     const [uploadedPreview, setUploadedPreview] = useState<string | null>(null)
     const [editPrompt, setEditPrompt] = useState("")
-    const [editEngine, setEditEngine] = useState<HyperrealImageEditModel>("nano-banana-edit")
     const [isGenerating, setIsGenerating] = useState(false)
     const [isDragging, setIsDragging] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -117,7 +117,7 @@ export function ImageEditForm({ sourceImageUrl, sourceImageName, onClose }: Imag
         document.body.removeChild(a)
     }
 
-    // Generate edited image via the proxy server
+    // Generate edited image — tries RunwayML first, then AI.CC as fallback
     const handleGenerate = async () => {
         if (!uploadedFile || !editPrompt.trim()) return
 
@@ -125,63 +125,61 @@ export function ImageEditForm({ sourceImageUrl, sourceImageName, onClose }: Imag
         setError(null)
 
         try {
-            // The proxy server URL — update this after deploying to Render
-            const PROXY_SERVER_URL = import.meta.env.VITE_IMAGE_PROXY_URL || "http://localhost:3002"
-
-            // Build multipart form data with image file + prompt + model
-            const formData = new FormData()
-            formData.append("image", uploadedFile)
-            formData.append("prompt", editPrompt.trim())
-            formData.append("model", editEngine)
-
-            // Optionally pass the HyperReal API key from the frontend env
-            const apiKey = import.meta.env.VITE_HYPERREAL_API_KEY
-            if (apiKey) {
-                formData.append("apiKey", apiKey)
+            // Convert image to base64
+            const getBase64 = (file: File): Promise<string> => {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader()
+                    reader.readAsDataURL(file)
+                    reader.onload = () => resolve(reader.result as string)
+                    reader.onerror = error => reject(error)
+                })
             }
 
-            console.log(`📤 Sending to proxy server: ${PROXY_SERVER_URL}/api/edit-image`)
-            console.log(`   File: ${uploadedFile.name} (${(uploadedFile.size / 1024).toFixed(1)} KB)`)
-            console.log(`   Prompt: ${editPrompt.trim()}`)
-            console.log(`   Model: ${editEngine}`)
+            const base64Image = await getBase64(uploadedFile)
 
-            const response = await fetch(`${PROXY_SERVER_URL}/api/edit-image`, {
-                method: "POST",
-                body: formData,
-            })
+            // Extract raw base64 from data URL
+            const rawBase64 = base64Image.includes(",") ? base64Image.split(",")[1] : base64Image
+            const mimeType = uploadedFile.type || "image/png"
+            const prompt = editPrompt.trim()
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ error: response.statusText }))
-                throw new Error(errorData.error || errorData.details || `Server error: ${response.status}`)
+            let resultUrl: string | null = null
+
+            // ── Provider 1: RunwayML (gen4_image) ──
+            try {
+                console.log(`🚀 [Provider 1/2] RunwayML gen4_image`)
+                console.log(`   Prompt: ${prompt}`)
+                resultUrl = await editImageWithRunway(prompt, rawBase64, mimeType)
+                console.log(`✅ Image edit completed via RunwayML!`)
+            } catch (runwayErr) {
+                console.warn("⚠️ RunwayML failed, falling back to AI.CC…", runwayErr)
             }
 
-            const result = await response.json()
-
-            if (!result.success || !result.editedImageUrl) {
-                throw new Error("Server returned no edited image URL")
+            // ── Provider 2: AI.CC (fallback) ──
+            if (!resultUrl) {
+                try {
+                    console.log(`🔄 [Provider 2/2] AI.CC doubao-seedream fallback`)
+                    resultUrl = await editImageWithAicc(prompt, rawBase64, mimeType)
+                    console.log(`✅ Image edit completed via AI.CC (fallback)!`)
+                } catch (aiccErr) {
+                    console.error("❌ AI.CC fallback also failed:", aiccErr)
+                    throw aiccErr // both providers failed → surface the error
+                }
             }
-
-            console.log(`✅ Image edit completed!`)
-            console.log(`   Credits used: ${result.creditsUsed}`)
-            console.log(`   Result URL: ${result.editedImageUrl}`)
 
             // Save the edited image to the project
             const timestamp = Date.now()
             const editedName = `ed_${String(timestamp).slice(-7)}.png`
             const editedPath = `images/${editedName}`
 
-            // Use the R2 URL directly (persisting to Supabase would fail due to CORS)
-            const finalImageUrl = result.editedImageUrl
-
-            addGeneratedFile(editedPath, finalImageUrl)
+            addGeneratedFile(editedPath, resultUrl)
 
             // Show the new image in the viewer
             setSelectedAsset({
                 name: editedName,
                 path: editedPath,
                 type: "image",
-                url: finalImageUrl,
-                content: finalImageUrl,
+                url: resultUrl,
+                content: resultUrl,
             } as any)
 
             // Close the edit form
@@ -308,43 +306,10 @@ export function ImageEditForm({ sourceImageUrl, sourceImageName, onClose }: Imag
                     />
                 </div>
 
-                {/* Step 3: Model selection */}
+                {/* Step 3: Edit prompt */}
                 <div className="space-y-2">
                     <label className="block text-[10px] font-bold text-muted-foreground tracking-wider uppercase">
-                        Step 3 — Choose edit model
-                    </label>
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => setEditEngine("nano-banana-edit")}
-                            disabled={isGenerating}
-                            className={cn(
-                                "flex-1 px-3 py-2 text-xs font-bold border-2 border-border transition-all",
-                                editEngine === "nano-banana-edit"
-                                    ? "bg-foreground text-background"
-                                    : "bg-background text-foreground hover:bg-muted"
-                            )}
-                        >
-                            Nano Banana
-                        </button>
-                        <button
-                            onClick={() => setEditEngine("nano-banana-pro-edit")}
-                            disabled={isGenerating}
-                            className={cn(
-                                "flex-1 px-3 py-2 text-xs font-bold border-2 border-border transition-all",
-                                editEngine === "nano-banana-pro-edit"
-                                    ? "bg-foreground text-background"
-                                    : "bg-background text-foreground hover:bg-muted"
-                            )}
-                        >
-                            Nano Banana Pro
-                        </button>
-                    </div>
-                </div>
-
-                {/* Step 4: Edit prompt */}
-                <div className="space-y-2">
-                    <label className="block text-[10px] font-bold text-muted-foreground tracking-wider uppercase">
-                        Step 4 — Describe the edit
+                        Step 3 — Describe the edit
                     </label>
                     <textarea
                         value={editPrompt}

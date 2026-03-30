@@ -13,6 +13,7 @@ export interface GitHubRepo {
   html_url: string
   default_branch: string
 }
+import { detectFileType } from "../utils/fileTypeDetection"
 
 export interface GitHubFile {
   path: string
@@ -170,10 +171,11 @@ export async function createOrUpdateFile(
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     // Fresh SHA fetch on each attempt
     let sha: string | undefined
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/')
 
     try {
       const getResponse = await fetch(
-        `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${path}?ref=${branch}`,
+        `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${encodedPath}?ref=${branch}`,
         {
           headers: {
             Authorization: `token ${accessToken}`,
@@ -191,10 +193,20 @@ export async function createOrUpdateFile(
     }
 
     // Encode content as base64
-    const encodedContent = btoa(unescape(encodeURIComponent(content)))
+    let encodedContent: string;
+    if (content.startsWith('data:')) {
+      const base64Index = content.indexOf('base64,');
+      if (base64Index !== -1) {
+        encodedContent = content.substring(base64Index + 7);
+      } else {
+        encodedContent = btoa(unescape(encodeURIComponent(content)));
+      }
+    } else {
+      encodedContent = btoa(unescape(encodeURIComponent(content)));
+    }
 
     const response = await fetch(
-      `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${path}`,
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${encodedPath}`,
       {
         method: "PUT",
         headers: {
@@ -266,7 +278,7 @@ export async function createOrUpdateFiles(
         file.path,
         file.content,
         branch,
-        `Add ${file.path}`
+        message
       )
       shas.push(sha)
     } catch (error) {
@@ -294,8 +306,9 @@ export async function getFileContent(
   path: string,
   branch: string = "game-dev-ai"
 ): Promise<string> {
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/')
   const response = await fetch(
-    `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${path}?ref=${branch}`,
+    `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${encodedPath}?ref=${branch}`,
     {
       headers: {
         Authorization: `token ${accessToken}`,
@@ -312,7 +325,19 @@ export async function getFileContent(
 
   // Decode base64 content
   if (data.encoding === "base64") {
-    return decodeURIComponent(escape(atob(data.content)))
+    const rawBase64 = data.content.replace(/[\r\n]+/g, "");
+    const fileTypeInfo = detectFileType(path);
+
+    if (fileTypeInfo.isBinary) {
+      const mimeType = fileTypeInfo.mimeType || 'application/octet-stream';
+      return `data:${mimeType};base64,${rawBase64}`;
+    } else {
+      try {
+        return decodeURIComponent(escape(atob(rawBase64)));
+      } catch (e) {
+        return atob(rawBase64);
+      }
+    }
   }
 
   return data.content

@@ -1,50 +1,69 @@
-import { ChevronLeft, ChevronRight, Download, Maximize2 } from "lucide-react"
+import { Download, Maximize2 } from "lucide-react"
 import * as React from "react"
-import { useEffect, useState } from "react"
+import { useState, useEffect } from "react"
 import { useAuth } from "../../hooks/useAuth"
-import { cn } from "../../lib/utils"
 import { uuidv4 } from "../../lib/uuid"
 import { saveVideo } from "../../services/multiDbDataService"
 import { uploadFileToDataDb } from "../../services/supabase"
-import { generateVideoWithVeo, pollVideoGeneration, type VeoGenerateResponse } from "../../services/veo3"
+import { generateVideoWithRunway, type RunwayVideoRatio, type RunwayVideoModel } from "../../services/runwayml"
 import { VideoPlayer } from "../chat/VideoPlayer"
 import { Button } from "../ui/button"
 import { Select } from "../ui/select"
 
-interface GeneratedVideoData {
-  url: string
-  prompt: string
-  predictionId: string
-  status: "starting" | "processing" | "succeeded" | "failed" | "canceled"
-  createdAt: string
-}
 
-interface VideoGenerationProps {
-  isSidebarOpen?: boolean
-  onToggleSidebar?: () => void
-}
+import { useAppStore } from "../../store/useAppStore"
 
-export function VideoGeneration({ isSidebarOpen = false, onToggleSidebar }: VideoGenerationProps) {
+export function VideoGeneration() {
   const { user, isAuthenticated } = useAuth()
+  const { generatedVideos, addGeneratedVideo } = useAppStore()
   const [prompt, setPrompt] = useState("")
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9")
   const [duration, setDuration] = useState<4 | 6 | 8>(8)
   const [resolution, setResolution] = useState<"720p" | "1080p">("1080p")
   const [generateAudio, setGenerateAudio] = useState(true)
   const [negativePrompt, setNegativePrompt] = useState("")
+  const [model, setModel] = useState<RunwayVideoModel>("gen4.5")
   const [firstFrameImage, setFirstFrameImage] = useState<File | null>(null)
   const [firstFramePreview, setFirstFramePreview] = useState<string | null>(null)
-  const [lastFrameImage, setLastFrameImage] = useState<File | null>(null)
-  const [lastFramePreview, setLastFramePreview] = useState<string | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
-  const [generatedVideos, setGeneratedVideos] = useState<GeneratedVideoData[]>([])
   const [error, setError] = useState<string | null>(null)
   const [selectedVideoIndex, setSelectedVideoIndex] = useState<number | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [pollingStatus, setPollingStatus] = useState<VeoGenerateResponse | null>(null)
+  const [pollingStatus, setPollingStatus] = useState<any | null>(null)
 
   // Cache for placeholder asset ID
   const placeholderAssetIdRef = React.useRef<string | null>(null)
+
+  // Helper function to upload image to storage and get public URL
+  const uploadImageToStorage = async (imageFile: File, userId: string, imageId: string): Promise<string> => {
+    try {
+      const storagePath = `images/${userId}/${imageId}.png`
+      const publicUrl = await uploadFileToDataDb("images", storagePath, imageFile)
+      return publicUrl
+    } catch (error) {
+      console.error("Error uploading image to storage:", error)
+      throw error
+    }
+  }
+
+  // Handle first frame image selection
+  const handleFirstFrameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setFirstFrameImage(file)
+      const previewUrl = URL.createObjectURL(file)
+      setFirstFramePreview(previewUrl)
+    }
+  }
+
+  // Clear first frame
+  const clearFirstFrame = () => {
+    if (firstFramePreview) {
+      URL.revokeObjectURL(firstFramePreview)
+    }
+    setFirstFrameImage(null)
+    setFirstFramePreview(null)
+  }
 
   // Helper function to get or create placeholder asset
   const getOrCreatePlaceholderAsset = async (userId: string): Promise<string | null> => {
@@ -84,56 +103,6 @@ export function VideoGeneration({ isSidebarOpen = false, onToggleSidebar }: Vide
       console.warn("Error getting placeholder asset:", error)
       return null
     }
-  }
-
-  // Helper function to upload image to storage and get public URL
-  const uploadImageToStorage = async (imageFile: File, userId: string, imageId: string): Promise<string> => {
-    try {
-      const storagePath = `images/${userId}/${imageId}.png`
-      const publicUrl = await uploadFileToDataDb("images", storagePath, imageFile)
-      return publicUrl
-    } catch (error) {
-      console.error("Error uploading image to storage:", error)
-      throw error
-    }
-  }
-
-  // Handle first frame image selection
-  const handleFirstFrameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      setFirstFrameImage(file)
-      const previewUrl = URL.createObjectURL(file)
-      setFirstFramePreview(previewUrl)
-    }
-  }
-
-  // Handle last frame image selection
-  const handleLastFrameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      setLastFrameImage(file)
-      const previewUrl = URL.createObjectURL(file)
-      setLastFramePreview(previewUrl)
-    }
-  }
-
-  // Clear first frame
-  const clearFirstFrame = () => {
-    if (firstFramePreview) {
-      URL.revokeObjectURL(firstFramePreview)
-    }
-    setFirstFrameImage(null)
-    setFirstFramePreview(null)
-  }
-
-  // Clear last frame
-  const clearLastFrame = () => {
-    if (lastFramePreview) {
-      URL.revokeObjectURL(lastFramePreview)
-    }
-    setLastFrameImage(null)
-    setLastFramePreview(null)
   }
 
   // Helper function to upload video to storage
@@ -201,93 +170,58 @@ export function VideoGeneration({ isSidebarOpen = false, onToggleSidebar }: Vide
       return
     }
 
+    if (model === "gen4_turbo" && !firstFrameImage) {
+      setError("gen4_turbo requires an initial image to generate video")
+      return
+    }
+
     setIsGenerating(true)
     setError(null)
     setPollingStatus(null)
 
     try {
-      // Upload images to storage if provided
       let firstFrameUrl: string | undefined
-      let lastFrameUrl: string | undefined
 
       if (firstFrameImage && user) {
         const imageId = uuidv4()
         firstFrameUrl = await uploadImageToStorage(firstFrameImage, user.id, imageId)
       }
 
-      if (lastFrameImage && user) {
-        const imageId = uuidv4()
-        lastFrameUrl = await uploadImageToStorage(lastFrameImage, user.id, imageId)
-      }
-
-      // Generate video
-      const response = await generateVideoWithVeo({
-        prompt: prompt.trim(),
-        aspect_ratio: aspectRatio,
-        duration,
-        resolution,
-        generate_audio: generateAudio,
-        negative_prompt: negativePrompt.trim() || undefined,
-        image: firstFrameUrl,
-        last_frame: lastFrameUrl,
+      // Generate video with Runway
+      const runwayRatio: RunwayVideoRatio = aspectRatio === "16:9" ? "1280:720" : "720:1280";
+      
+      const videoUrl = await generateVideoWithRunway(prompt.trim(), {
+        model: model,
+        ratio: runwayRatio,
+        duration: duration,
+        promptImage: firstFrameUrl,
       })
 
-      const videoData: GeneratedVideoData = {
-        url: "",
+      const predictionId = uuidv4()
+
+      const videoData = {
+        url: videoUrl,
         prompt: prompt.trim(),
-        predictionId: response.id,
-        status: response.status,
-        createdAt: response.created_at || new Date().toISOString(),
+        predictionId: predictionId,
+        status: "succeeded" as any,
+        createdAt: new Date().toISOString(),
       }
 
-      setGeneratedVideos([videoData, ...generatedVideos])
+      addGeneratedVideo(videoData)
       setSelectedVideoIndex(0)
-
-      // Poll for completion
-      setPollingStatus(response)
-
-      const videoUrl = await pollVideoGeneration(
-        response.id,
-        (status) => {
-          setPollingStatus(status)
-          // Update the video data with current status
-          setGeneratedVideos((prev) =>
-            prev.map((v) =>
-              v.predictionId === response.id
-                ? { ...v, status: status.status }
-                : v
-            )
-          )
-        }
-      )
-
-      // Update with final video URL
-      setGeneratedVideos((prev) =>
-        prev.map((v) =>
-          v.predictionId === response.id
-            ? { ...v, url: videoUrl, status: "succeeded" }
-            : v
-        )
-      )
 
       // Save to database
       await saveGeneratedVideo({
         url: videoUrl,
         prompt: prompt.trim(),
-        predictionId: response.id,
+        predictionId: predictionId,
       })
     } catch (err) {
       console.error("Error generating video:", err)
       setError(err instanceof Error ? err.message : "Failed to generate video")
 
-      // Update status to failed
-      setGeneratedVideos((prev) =>
-        prev.map((v) =>
-          v.predictionId === prev[0]?.predictionId
-            ? { ...v, status: "failed" }
-            : v
-        )
-      )
+      // Update status to failed in global store if we have a predictionId
+      // (This is a simplified approach, in a real scenario we'd need the ID)
     } finally {
       setIsGenerating(false)
       setPollingStatus(null)
@@ -307,74 +241,14 @@ export function VideoGeneration({ isSidebarOpen = false, onToggleSidebar }: Vide
       if (firstFramePreview) {
         URL.revokeObjectURL(firstFramePreview)
       }
-      if (lastFramePreview) {
-        URL.revokeObjectURL(lastFramePreview)
-      }
     }
-  }, [firstFramePreview, lastFramePreview])
+  }, [firstFramePreview])
 
   return (
     <div className="flex h-screen bg-background font-mono">
-      {/* Sidebar */}
-      <div
-        className={cn(
-          "bg-background border-r-2 border-border transition-all duration-300 flex flex-col",
-          isSidebarOpen ? "w-64" : "w-16"
-        )}
-      >
-        {/* Header */}
-        <div className="border-b-2 border-border px-6 py-2 h-14 flex items-center justify-between shrink-0">
-          {isSidebarOpen && <h2 className="text-sm font-bold text-foreground">Video Generation</h2>}
-          <button
-            onClick={onToggleSidebar}
-            className="p-1 hover:bg-muted rounded"
-          >
-            {isSidebarOpen ? (
-              <ChevronLeft className="h-4 w-4 text-foreground" />
-            ) : (
-              <ChevronRight className="h-4 w-4 text-foreground" />
-            )}
-          </button>
-        </div>
-
-        {/* Content */}
-        {isSidebarOpen && (
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* Generation History */}
-            <div>
-              <h3 className="text-xs font-bold text-muted-foreground mb-2">$ history</h3>
-              <div className="space-y-2">
-                {generatedVideos.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">$ no_videos_generated_yet</p>
-                ) : (
-                  generatedVideos.map((video, index) => (
-                    <div
-                      key={video.predictionId}
-                      className={cn(
-                        "p-2 border border-border cursor-pointer hover:bg-muted transition-colors",
-                        selectedVideoIndex === index && "bg-muted border-foreground"
-                      )}
-                      onClick={() => setSelectedVideoIndex(index)}
-                    >
-                      <p className="text-xs text-muted-foreground truncate">{video.prompt}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {video.status === "succeeded" ? "✓" : video.status === "failed" ? "✗" : "..."}
-                      </p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="border-b-2 border-border px-6 py-4 flex items-center justify-between shrink-0">
-          <h1 className="text-3xl font-bold text-foreground">$ video_generation</h1>
-        </div>
+
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto min-h-0 p-6 pb-20">
@@ -396,6 +270,21 @@ export function VideoGeneration({ isSidebarOpen = false, onToggleSidebar }: Vide
               </div>
 
               <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-foreground mb-2">
+                    $ model
+                  </label>
+                  <Select
+                    value={model}
+                    onValueChange={(value) => setModel(value as RunwayVideoModel)}
+                    options={[
+                      { value: "gen4.5", label: "gen4.5 (Text/Image to Video)" },
+                      { value: "gen4_turbo", label: "gen4_turbo (Image to Video)" },
+                      { value: "veo3.1", label: "veo3.1" },
+                    ]}
+                  />
+                </div>
+
                 <div>
                   <label className="block text-sm font-bold text-foreground mb-2">
                     $ aspect_ratio
@@ -472,7 +361,7 @@ export function VideoGeneration({ isSidebarOpen = false, onToggleSidebar }: Vide
               {/* First Frame Image Input */}
               <div>
                 <label className="block text-sm font-bold text-foreground mb-2">
-                  $ first_frame_image (optional)
+                  $ prompt_image (optional for gen4.5, required for gen4_turbo)
                 </label>
                 <div className="space-y-2">
                   {firstFramePreview ? (
@@ -499,48 +388,11 @@ export function VideoGeneration({ isSidebarOpen = false, onToggleSidebar }: Vide
                         className="hidden"
                         disabled={!isAuthenticated}
                       />
-                      Click to upload first frame image
+                      Click to upload initial frame image
                     </label>
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">Input image for image-to-video generation</p>
-              </div>
-
-              {/* Last Frame Image Input */}
-              <div>
-                <label className="block text-sm font-bold text-foreground mb-2">
-                  $ last_frame_image (optional)
-                </label>
-                <div className="space-y-2">
-                  {lastFramePreview ? (
-                    <div className="relative border-2 border-border">
-                      <img
-                        src={lastFramePreview}
-                        alt="Last frame preview"
-                        className="w-full h-48 object-contain bg-muted"
-                      />
-                      <button
-                        onClick={clearLastFrame}
-                        className="absolute top-2 right-2 p-1.5 bg-red-600 hover:bg-red-700 text-white rounded"
-                        type="button"
-                      >
-                        <Maximize2 className="h-4 w-4 rotate-45" />
-                      </button>
-                    </div>
-                  ) : (
-                    <label className={`block w-full border-2 border-border p-3 bg-background text-foreground hover:bg-muted cursor-pointer font-mono text-sm text-center ${!isAuthenticated ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleLastFrameChange}
-                        className="hidden"
-                        disabled={!isAuthenticated}
-                      />
-                      Click to upload last frame image
-                    </label>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Ending image for interpolation (requires first frame)</p>
               </div>
 
               {error && (

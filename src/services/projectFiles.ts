@@ -1,21 +1,20 @@
 /**
  * Project Files Service
- * 
- * Code files are stored ONLY in the user's connected GitHub repository
- * Non-code files (assets) are stored in Supabase
+ *
+ * STORAGE STRATEGY:
+ *   - Code files (.ts, .js, .json, .html, .css, etc.) → Supabase DB (primary)
+ *   - Binary assets (.png, .glb, .mp4, .mp3, etc.)   → Cloudflare R2 (primary)
+ *   - GitHub                                          → NOT USED (removed)
+ *
+ * R2 uploads go through a secure Cloudflare Worker proxy — no secrets in browser.
+ * Binary files stored in R2 get their public URL saved in Supabase project_files
+ * as a reference pointer so loadProjectFilesFromStorage can return R2 URLs.
  */
 
-import {
-  deleteFileFromGitHub,
-  getProjectGitHubInfo,
-  isCodeFile,
-  syncFileToGitHub
-} from "./githubProjectSync"
 import { deleteProjectFileDirectly, loadProjectFiles, loadProjectSettingsFile, saveProjectFile, saveProjectFiles } from "./supabase"
+import { isBinaryAsset, isR2Configured, uploadAssetToR2, deleteAssetFromR2 } from "./r2Storage"
 
-const GITHUB_API_BASE = "https://api.github.com"
-
-// Type for GitHub connection - now properly typed
+// Keep the type export for backward compatibility (Dashboard still imports it)
 export interface GitHubConnectionInput {
   accessToken: string
   repoOwner: string
@@ -30,316 +29,71 @@ export interface ProjectFilesData {
 }
 
 /**
- * Get GitHub connection from localStorage for a user
- */
-function getGitHubConnectionForUser(userId: string): GitHubConnectionInput | null {
-  try {
-    const storageKey = `github_connection_${userId}`
-    const stored = localStorage.getItem(storageKey)
-    if (!stored) return null
-
-    const connection = JSON.parse(stored)
-
-    // Validate connection has required fields
-    if (!connection.accessToken || connection.accessToken.startsWith('oauth_code_')) {
-      console.log('[getGitHubConnectionForUser] Invalid token:', connection.accessToken?.substring(0, 20))
-      return null
-    }
-
-    if (!connection.repoOwner) {
-      console.log('[getGitHubConnectionForUser] Missing repoOwner')
-      return null
-    }
-
-    // Use koye-projects as default repo name if not set
-    return {
-      accessToken: connection.accessToken,
-      repoOwner: connection.repoOwner,
-      repoName: connection.repoName || 'koye-projects',
-      branch: connection.branch || 'main'
-    } as GitHubConnectionInput
-  } catch (error) {
-    console.error('[getGitHubConnectionForUser] Error:', error)
-    return null
-  }
-}
-
-/**
- * Fetch a file from GitHub
- */
-async function fetchFileFromGitHub(
-  accessToken: string,
-  repoOwner: string,
-  repoName: string,
-  branch: string,
-  filePath: string
-): Promise<string | null> {
-  try {
-    const response = await fetch(
-      `${GITHUB_API_BASE}/repos/${repoOwner}/${repoName}/contents/${filePath}?ref=${branch}`,
-      {
-        headers: {
-          Authorization: `token ${accessToken}`,
-          Accept: 'application/vnd.github.v3+json'
-        }
-      }
-    )
-
-    if (!response.ok) {
-      return null
-    }
-
-    const data = await response.json()
-
-    // GitHub returns content as base64 encoded
-    if (data.content && data.encoding === 'base64') {
-      return atob(data.content.replace(/\n/g, ''))
-    }
-
-    return null
-  } catch (error) {
-    console.warn(`Failed to fetch file ${filePath} from GitHub:`, error)
-    return null
-  }
-}
-
-/**
- * List all files in a project folder on GitHub
- */
-async function listProjectFilesFromGitHub(
-  accessToken: string,
-  repoOwner: string,
-  repoName: string,
-  branch: string,
-  projectId: string
-): Promise<string[]> {
-  const filePaths: string[] = []
-
-  async function fetchDirectory(path: string): Promise<void> {
-    try {
-      const response = await fetch(
-        `${GITHUB_API_BASE}/repos/${repoOwner}/${repoName}/contents/${path}?ref=${branch}`,
-        {
-          headers: {
-            Authorization: `token ${accessToken}`,
-            Accept: 'application/vnd.github.v3+json'
-          }
-        }
-      )
-
-      if (!response.ok) {
-        return
-      }
-
-      const items = await response.json()
-
-      if (!Array.isArray(items)) {
-        return
-      }
-
-      for (const item of items) {
-        if (item.type === 'file' && !item.name.startsWith('.')) {
-          // Extract relative path (remove projects/{projectId}/ prefix)
-          const relativePath = item.path.replace(`projects/${projectId}/`, '')
-          filePaths.push(relativePath)
-        } else if (item.type === 'dir' && !item.name.startsWith('.')) {
-          await fetchDirectory(item.path)
-        }
-      }
-    } catch (error) {
-      console.warn(`Failed to list directory ${path}:`, error)
-    }
-  }
-
-  await fetchDirectory(`projects/${projectId}`)
-  return filePaths
-}
-
-/**
- * Load all project code files from GitHub
- */
-async function loadCodeFilesFromGitHub(
-  projectId: string,
-  connection: GitHubConnectionInput
-): Promise<Record<string, string>> {
-  const { accessToken, repoOwner, repoName, branch } = connection
-  const files: Record<string, string> = {}
-
-  try {
-    // List all files in the project folder
-    const filePaths = await listProjectFilesFromGitHub(
-      accessToken,
-      repoOwner,
-      repoName,
-      branch,
-      projectId
-    )
-
-    console.log(`Found ${filePaths.length} files in GitHub for project ${projectId}`)
-
-    // Fetch each file's content
-    const fetchPromises = filePaths.map(async (relativePath) => {
-      const fullPath = `projects/${projectId}/${relativePath}`
-      const content = await fetchFileFromGitHub(
-        accessToken,
-        repoOwner,
-        repoName,
-        branch,
-        fullPath
-      )
-
-      if (content !== null) {
-        files[relativePath] = content
-      }
-    })
-
-    await Promise.allSettled(fetchPromises)
-  } catch (error) {
-    console.error('Error loading files from GitHub:', error)
-  }
-
-  return files
-}
-
-/**
  * Save project files:
- * - Code files go ONLY to GitHub
- * - Non-code files go to Supabase
+ * - Binary assets → R2 (via Worker proxy), with R2 URL stored in Supabase
+ * - Code/text files → Supabase DB
  */
 export async function saveProjectFilesToStorage(
   projectId: string,
   userId: string,
   _projectName: string,
   files: Record<string, string>,
-  githubConnection?: GitHubConnectionInput | null
+  _githubConnection?: GitHubConnectionInput | null
 ): Promise<void> {
-  const connection = githubConnection || getGitHubConnectionForUser(userId)
-
   console.log(`[saveProjectFilesToStorage] Saving ${Object.keys(files).length} files for project ${projectId}`)
-  console.log(`[saveProjectFilesToStorage] GitHub connection:`, connection ? {
-    repoOwner: connection.repoOwner,
-    repoName: connection.repoName,
-    branch: connection.branch
-  } : 'null')
 
-  // Separate code files from non-code files
-  const codeFiles: Record<string, string> = {}
-  const nonCodeFiles: Record<string, string> = {}
+  const textFiles: Record<string, string> = {}
+  const binaryEntries: [string, string][] = []
 
+  // Categorize files
   for (const [path, content] of Object.entries(files)) {
-    if (isCodeFile(path)) {
-      codeFiles[path] = content
+    if (isBinaryAsset(path)) {
+      binaryEntries.push([path, content])
     } else {
-      nonCodeFiles[path] = content
+      textFiles[path] = content
     }
   }
 
-  console.log(`[saveProjectFilesToStorage] Code files: ${Object.keys(codeFiles).length}, Non-code files: ${Object.keys(nonCodeFiles).length}`)
-  console.log(`[saveProjectFilesToStorage] Code file paths:`, Object.keys(codeFiles))
-
-  // Save non-code files to Supabase
-  if (Object.keys(nonCodeFiles).length > 0) {
-    await saveProjectFiles(projectId, userId, nonCodeFiles)
-  }
-
-  // Save code files to GitHub ONLY
-  if (Object.keys(codeFiles).length > 0 && connection) {
-    console.log(`[saveProjectFilesToStorage] Syncing ${Object.keys(codeFiles).length} code files to GitHub...`)
-    await syncCodeFilesToGitHub(projectId, codeFiles, connection)
-  } else if (Object.keys(codeFiles).length > 0) {
-    console.warn('[saveProjectFilesToStorage] No GitHub connection - code files will not be saved!')
-    // Fallback: save to Supabase if no GitHub connection (shouldn't happen if mandatory)
-    await saveProjectFiles(projectId, userId, codeFiles)
-  }
-}
-
-/**
- * Helper to sync code files to GitHub
- */
-async function syncCodeFilesToGitHub(
-  projectId: string,
-  files: Record<string, string>,
-  connection: GitHubConnectionInput
-): Promise<void> {
-  const { accessToken, repoOwner, repoName, branch } = connection
-
-  // Get project GitHub info to check if sync is enabled
-  const githubInfo = await getProjectGitHubInfo(projectId)
-  if (githubInfo && !githubInfo.githubSyncEnabled) {
-    console.log("GitHub sync disabled for project", projectId)
-    return
-  }
-
-  const fileEntries = Object.entries(files)
-  console.log(`Saving ${fileEntries.length} code files to GitHub for project ${projectId}`)
-
-  // Sync files SEQUENTIALLY to avoid SHA conflicts
-  // (parallel updates cause 409 errors because SHA changes after each commit)
-  for (const [path, content] of fileEntries) {
+  // 1. Save binary assets one-by-one (R2 involves separate uploads)
+  for (const [path, content] of binaryEntries) {
     try {
-      await syncFileToGitHub(
-        accessToken,
-        repoOwner,
-        repoName,
-        branch,
-        projectId,
-        path,
-        content
-      )
-      console.log(`✓ Synced ${path} to GitHub`)
+      await saveSingleProjectFile(projectId, userId, _projectName, path, content)
     } catch (error) {
-      console.warn(`⚠ Failed to save file ${path} to GitHub:`, error)
-      // Continue with next file instead of stopping
+      console.warn(`[saveProjectFilesToStorage] Error saving binary file ${path}:`, error)
+    }
+  }
+
+  // 2. Save all text files in one batch (Supabase upsert)
+  if (Object.keys(textFiles).length > 0) {
+    try {
+      await saveProjectFiles(projectId, userId, textFiles)
+      console.log(`✓ Saved ${Object.keys(textFiles).length} text files to Supabase in batch`)
+    } catch (error) {
+      console.error(`✗ Batch save failed for text files:`, error)
     }
   }
 }
 
 /**
  * Load project files:
- * - Code files from GitHub
- * - Non-code files from Supabase
+ * - ALL files from Supabase DB (code files + R2 URL pointers for assets)
  */
 export async function loadProjectFilesFromStorage(
   projectId: string,
   userId: string,
-  githubConnection?: GitHubConnectionInput | null
+  _githubConnection?: GitHubConnectionInput | null
 ): Promise<Record<string, string>> {
-  const connection = githubConnection || getGitHubConnectionForUser(userId)
-
-  // Start with non-code files from Supabase
+  // Load ALL files from Supabase (code files + R2 URL references for assets)
   const supabaseFiles = await loadProjectFiles(projectId, userId)
+  console.log(`Loaded ${Object.keys(supabaseFiles).length} files from storage`)
 
-  // Filter to only non-code files from Supabase
-  const nonCodeFiles: Record<string, string> = {}
-  for (const [path, content] of Object.entries(supabaseFiles)) {
-    if (!isCodeFile(path)) {
-      nonCodeFiles[path] = content
-    }
-  }
-
-  // Load code files from GitHub
-  let codeFiles: Record<string, string> = {}
-  if (connection) {
-    codeFiles = await loadCodeFilesFromGitHub(projectId, connection)
-    console.log(`Loaded ${Object.keys(codeFiles).length} code files from GitHub`)
-  } else {
-    // Fallback: load all files from Supabase if no GitHub connection
-    console.log('No GitHub connection - loading code files from Supabase fallback')
-    for (const [path, content] of Object.entries(supabaseFiles)) {
-      if (isCodeFile(path)) {
-        codeFiles[path] = content
-      }
-    }
-  }
-
-  // Merge: GitHub code files + Supabase non-code files
-  return { ...nonCodeFiles, ...codeFiles }
+  return supabaseFiles
 }
 
 /**
  * Save a single project file:
- * - Code files go ONLY to GitHub
- * - Non-code files go to Supabase
+ * - Binary assets → R2 primary, R2 URL saved to Supabase as reference
+ * - Code/text files → Supabase DB
  */
 export async function saveSingleProjectFile(
   projectId: string,
@@ -347,88 +101,93 @@ export async function saveSingleProjectFile(
   _projectName: string,
   path: string,
   content: string,
-  githubConnection?: GitHubConnectionInput | null
+  _githubConnection?: GitHubConnectionInput | null
 ): Promise<void> {
-  console.log(`[saveSingleProjectFile] Saving ${path}, isCodeFile: ${isCodeFile(path)}`)
+  const binary = isBinaryAsset(path)
 
-  if (isCodeFile(path)) {
-    // Code files go to GitHub ONLY
-    const connection = githubConnection || getGitHubConnectionForUser(userId)
-    console.log(`[saveSingleProjectFile] GitHub connection:`, connection ? {
-      repoOwner: connection.repoOwner,
-      repoName: connection.repoName,
-      branch: connection.branch
-    } : 'null')
+  // If the content is already an HTTP(S) URL (e.g. an R2 public URL loaded
+  // from Supabase after a page reload), there is no need to re-upload to R2.
+  // Just persist the URL pointer in Supabase as-is.
+  const isAlreadyUrl = content.startsWith('http://') || content.startsWith('https://')
 
-    if (connection) {
-      // Check if sync is enabled for this project
-      const githubInfo = await getProjectGitHubInfo(projectId)
-      console.log(`[saveSingleProjectFile] GitHub info for project:`, githubInfo)
+  console.log(`[saveSingleProjectFile] Saving ${path}, binary: ${binary}, R2: ${isR2Configured()}, alreadyUrl: ${isAlreadyUrl}`)
 
-      if (!githubInfo || githubInfo.githubSyncEnabled !== false) {
-        try {
-          console.log(`[saveSingleProjectFile] Syncing to GitHub: ${connection.repoOwner}/${connection.repoName}/projects/${projectId}/${path}`)
-          await syncFileToGitHub(
-            connection.accessToken,
-            connection.repoOwner,
-            connection.repoName,
-            connection.branch,
-            projectId,
-            path,
-            content
-          )
-          console.log(`✓ Saved ${path} to GitHub`)
-        } catch (error) {
-          console.error(`✗ Failed to save ${path} to GitHub:`, error)
-          throw error // Throw so caller knows save failed
+  if (binary && isR2Configured() && !isAlreadyUrl) {
+    // ── BINARY ASSET → R2 (new upload: data URL or base64) ──
+    try {
+      // Ensure the R2 key has a file extension so the public URL is type-detectable.
+      // If the path already has one (e.g. uploads/photo.png) this is a no-op.
+      // If not, infer the extension from the data URL MIME type.
+      let r2Path = path
+      const lastSegment = path.split('/').pop() || ''
+      const hasExtension = lastSegment.includes('.') && lastSegment.split('.').pop()!.length <= 5
+      if (!hasExtension && content.startsWith('data:')) {
+        const mimeMatch = content.match(/^data:([^;,]+)/)
+        if (mimeMatch) {
+          const mime = mimeMatch[1]
+          const extMap: Record<string, string> = {
+            'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif',
+            'image/webp': '.webp', 'image/svg+xml': '.svg', 'image/bmp': '.bmp',
+            'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
+            'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/ogg': '.ogg',
+            'audio/flac': '.flac', 'audio/mp4': '.m4a', 'audio/aac': '.aac',
+            'model/gltf-binary': '.glb', 'model/gltf+json': '.gltf',
+            'application/pdf': '.pdf', 'application/zip': '.zip',
+            'application/octet-stream': '.bin',
+          }
+          const ext = extMap[mime] || ''
+          if (ext) {
+            r2Path = `${path}${ext}`
+            console.log(`[saveSingleProjectFile] Appended extension: ${path} → ${r2Path}`)
+          }
         }
-      } else {
-        console.log(`[saveSingleProjectFile] GitHub sync disabled for project ${projectId}`)
       }
-    } else {
-      console.warn('[saveSingleProjectFile] No GitHub connection - cannot save code file!')
-      // Fallback: save to Supabase if no GitHub connection
+
+      const r2Key = `projects/${projectId}/assets/${r2Path}`
+      const publicUrl = await uploadAssetToR2(userId, r2Key, content)
+
+      // Store the R2 public URL in Supabase as reference pointer
+      await saveProjectFile(projectId, userId, path, publicUrl)
+      console.log(`✓ Saved ${path} to R2, URL stored in Supabase`)
+    } catch (error) {
+      console.error(`✗ R2 upload failed for ${path}, falling back to Supabase:`, error)
+      // Fallback: save binary data directly to Supabase
       await saveProjectFile(projectId, userId, path, content)
+      console.log(`✓ Saved ${path} to Supabase (R2 fallback)`)
     }
   } else {
-    // Non-code files go to Supabase
+    // ── CODE / TEXT FILE or already-uploaded asset URL → SUPABASE DB ──
     await saveProjectFile(projectId, userId, path, content)
+    console.log(`✓ Saved ${path} to Supabase DB`)
   }
 }
 
 /**
  * Delete a single project file:
- * - Code files deleted from GitHub
- * - Non-code files deleted from Supabase
+ * - Binary assets: delete from R2 + Supabase reference
+ * - Code files: delete from Supabase
  */
 export async function deleteProjectFile(
   projectId: string,
   userId: string,
   path: string,
-  githubConnection?: GitHubConnectionInput | null
+  _githubConnection?: GitHubConnectionInput | null
 ): Promise<void> {
-  if (isCodeFile(path)) {
-    // Delete code files from GitHub
-    const connection = githubConnection || getGitHubConnectionForUser(userId)
-    if (connection) {
-      try {
-        await deleteFileFromGitHub(
-          connection.accessToken,
-          connection.repoOwner,
-          connection.repoName,
-          connection.branch,
-          projectId,
-          path
-        )
-        console.log(`Deleted ${path} from GitHub`)
-      } catch (error) {
-        console.warn(`Failed to delete ${path} from GitHub:`, error)
-      }
+  const binary = isBinaryAsset(path)
+
+  if (binary && isR2Configured()) {
+    // Delete from R2
+    try {
+      const r2Key = `projects/${projectId}/assets/${path}`
+      await deleteAssetFromR2(userId, r2Key)
+      console.log(`✓ Deleted ${path} from R2`)
+    } catch (error) {
+      console.warn(`⚠ Failed to delete ${path} from R2:`, error)
     }
-  } else {
-    // Delete non-code files from Supabase
-    await deleteProjectFileDirectly(projectId, userId, path)
   }
+
+  // Always delete the Supabase reference/content
+  await deleteProjectFileDirectly(projectId, userId, path)
 }
 
 /**

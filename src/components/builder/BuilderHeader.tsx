@@ -1,7 +1,7 @@
 import { Play, Redo, Undo } from "lucide-react"
 import { cn } from "../../lib/utils"
 import { Button } from "../ui/button"
-import { ThemeToggle } from "../ui/theme-toggle"
+
 
 interface BuilderHeaderProps {
     projectName: string
@@ -57,7 +57,7 @@ export function BuilderHeader({ projectName, onUndo, onRedo, onPlay, canUndo, ca
             </div>
 
             <div className="flex items-center gap-4">
-                <ThemeToggle />
+
                 <Button
                     onClick={onPlay}
                     className="bg-background text-foreground hover:bg-muted font-mono text-xs font-bold flex items-center gap-2 px-4 py-2 border-2 border-foreground shadow-[4px_4px_0px_0px_currentColor] hover:shadow-[2px_2px_0px_0px_currentColor] hover:translate-x-[2px] hover:translate-y-[2px] transition-all rounded-none"

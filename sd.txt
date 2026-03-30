@@ -1,1 +1,0 @@
-Use 16:9 aspect ratio images (1280x720 or 1920x1080)

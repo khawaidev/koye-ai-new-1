@@ -70,20 +70,32 @@ export function buildFileTree(
     const fileType = getFileNodeType(path) || "code"
     const content = files[path]
 
-    // For images, set the url property so it can be used for editing
-    // The content might be a data URL or HTTP URL for images
-    const isImageContent = content && (
-      content.startsWith('data:image/') ||
-      content.startsWith('http://') ||
-      content.startsWith('https://')
-    )
+    // For binary assets (images, videos, etc.), resolve the URL from content
+    let resolvedUrl: string | undefined = undefined
+    if (content && (fileType === 'image' || fileType === 'video' || fileType === 'audio' || fileType === 'model')) {
+      if (
+        content.startsWith('data:') ||
+        content.startsWith('http://') ||
+        content.startsWith('https://') ||
+        content.startsWith('blob:')
+      ) {
+        resolvedUrl = content
+      } else {
+        // Fallback: extract URL from markdown metadata (legacy data format)
+        const urlMatch = content.match(/\*\*URL:\*\*\s*(https?:\/\/[^\s\n*)]+)/i)
+          || content.match(/# URL:\s*(https?:\/\/[^\s\n]+)/i)
+          || content.match(/(https?:\/\/[^\s\n*)]+)/i)
+        if (urlMatch) {
+          resolvedUrl = urlMatch[1]
+        }
+      }
+    }
 
     addNode(path, "file", fileType, {
       name,
       path,
       content: content,
-      // Set url for images to ensure proper handling in BuilderInspector
-      url: fileType === 'image' && isImageContent ? content : undefined,
+      url: resolvedUrl,
       type: fileType
     })
   })

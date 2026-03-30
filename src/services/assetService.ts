@@ -9,6 +9,7 @@
  */
 
 import { getMultiDbManager } from "./multiDbManager"
+import { isR2Configured, uploadAssetToR2, deleteAssetFromR2 } from "./r2Storage"
 
 // ==================== Types ====================
 
@@ -78,16 +79,23 @@ function generateAssetPath(userId: string, projectId: string | null, assetType: 
 
 /**
  * Ensure bucket exists - with better error handling
- * Note: The bucket should be pre-created in Supabase dashboard
- * This function now just checks if the bucket exists and logs a warning if not
+ * Note: If bucket doesn't exist, we try to create it using service role client if available
+ * This avoids the 400 Bad Request for client-side creation under RLS
  */
-async function ensureBucketExists(bucketName: string, dbClient: any): Promise<boolean> {
+async function ensureBucketExists(bucketName: string, dbClient: any, dbId: string): Promise<boolean> {
     try {
+        const dbManager = getMultiDbManager()
+        
+        // Find DB URL for clearer messaging
+        const allConfigs = (dbManager as any).dbConfigs || []
+        const config = allConfigs.find((c: any) => c.id === dbId)
+        const dbInfo = config ? `(URL: ${config.url})` : ''
+
         // Check if bucket exists
         const { data: buckets, error: listError } = await dbClient.storage.listBuckets()
 
         if (listError) {
-            console.warn(`Could not list buckets: ${listError.message}`)
+            console.warn(`[${dbId}] Could not list buckets: ${listError.message} ${dbInfo}`)
             // Try to upload anyway - bucket might exist but listing failed
             return true
         }
@@ -95,24 +103,35 @@ async function ensureBucketExists(bucketName: string, dbClient: any): Promise<bo
         const exists = buckets?.some((b: any) => b.name === bucketName)
 
         if (!exists) {
-            // Try to create the bucket (will likely fail due to RLS, but try anyway)
-            const { error } = await dbClient.storage.createBucket(bucketName, {
+            console.log(`[${dbId}] Bucket "${bucketName}" not found. Attempting to create...`)
+            
+            // Try service role client first (higher success rate for bucket creation)
+            const adminDb = dbManager.getServiceDb(dbId)
+            const creationDb = adminDb || dbClient
+
+            const { error: createError } = await creationDb.storage.createBucket(bucketName, {
                 public: true,
             })
-            if (error) {
-                if (error.message?.includes('already exists')) {
-                    return true // Bucket exists, great!
+            
+            if (createError) {
+                if (createError.message?.includes('already exists')) {
+                    return true
                 }
-                // Log the error but don't fail - the upload might still work if bucket was created manually
-                console.warn(`Bucket "${bucketName}" not found. Please create it in Supabase dashboard.`)
-                console.warn(`To fix: Go to Supabase Dashboard > Storage > Create new bucket named "${bucketName}" with public access`)
-                return true // Try anyway
+                
+                console.error(`[${dbId}] [CRITICAL] Bucket "${bucketName}" NOT found in DB: ${dbId}.`)
+                console.error(`To fix this:`)
+                console.error(`1. Go to Supabase Dashboard for project ${dbId}: ${config?.url || 'URL not found'}`)
+                console.error(`2. Navigate to Storage > Buckets`)
+                console.error(`3. Create a NEW bucket named exactly "${bucketName}"`)
+                console.error(`4. MAKE SURE you set the bucket to "Public"`)
+                return false
+            } else {
+                console.log(`[${dbId}] Successfully created "${bucketName}" bucket automatically.`)
             }
         }
         return true
     } catch (error) {
-        console.error(`Error ensuring bucket ${bucketName} exists:`, error)
-        // Don't fail - try the upload anyway
+        console.error(`Error ensuring bucket ${bucketName} exists on ${dbId}:`, error)
         return true
     }
 }
@@ -133,28 +152,50 @@ export async function createAsset(input: CreateAssetInput): Promise<AssetMetadat
     const bucketName = getBucketName() // Use shared bucket
     const bucketPath = generateAssetPath(userId, projectId || null, assetType, assetId, name)
 
-    // Ensure bucket exists
-    await ensureBucketExists(bucketName, db)
+    // Track if we successfully used R2
+    let publicUrl = ""
+    let isR2 = false
 
-    // Upload file to bucket
-    const { data: _uploadData, error: uploadError } = await db.storage
-        .from(bucketName)
-        .upload(bucketPath, file, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: mimeType || file.type,
-        })
+    // Check if it's a binary asset to upload to R2
+    const binaryTypes = ["image", "video", "audio", "model"]
+    const isBinaryAsset = binaryTypes.includes(assetType)
 
-    if (uploadError) {
-        throw new Error(`Failed to upload asset: ${uploadError.message}`)
+    if (isBinaryAsset && isR2Configured()) {
+        try {
+            // Strip the userId prefix because uploadAssetToR2 prepends it
+            const r2Key = bucketPath.substring(userId.length + 1)
+            publicUrl = await uploadAssetToR2(userId, r2Key, file, mimeType || file.type)
+            isR2 = true
+            console.log(`✓ Saved general asset to R2: ${bucketPath}`)
+        } catch (error) {
+            console.warn(`✗ R2 upload failed for general asset, falling back to Supabase:`, error)
+        }
     }
 
-    // Get public URL
-    const { data: urlData } = db.storage
-        .from(bucketName)
-        .getPublicUrl(bucketPath)
+    if (!isR2) {
+        // Ensure bucket exists
+        await ensureBucketExists(bucketName, db, dbId)
 
-    const publicUrl = urlData.publicUrl
+        // Upload file to Supabase bucket
+        const { data: _uploadData, error: uploadError } = await db.storage
+            .from(bucketName)
+            .upload(bucketPath, file, {
+                cacheControl: "3600",
+                upsert: false,
+                contentType: mimeType || file.type,
+            })
+
+        if (uploadError) {
+            throw new Error(`Failed to upload asset: ${uploadError.message}`)
+        }
+
+        // Get public URL
+        const { data: urlData } = db.storage
+            .from(bucketName)
+            .getPublicUrl(bucketPath)
+
+        publicUrl = urlData.publicUrl
+    }
 
     // Save metadata to database
     const now = new Date().toISOString()
@@ -207,8 +248,9 @@ export async function createAssetFromUrl(
             // If it's a TypeError (often CORS or network error) and it's an external URL, try proxy
             if ((err.name === 'TypeError' || err.message === 'Failed to fetch') && url.startsWith('http')) {
                 console.warn(`Direct fetch failed for ${url}, trying local proxy...`);
-                // Use the local OAuth server proxy at port 3001
-                const proxyUrl = `http://localhost:3001/api/proxy-image?url=${encodeURIComponent(url)}`;
+                // Use the configured backend URL or default to localhost
+                const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001"
+                const proxyUrl = `${backendUrl}/api/proxy-image?url=${encodeURIComponent(url)}`;
                 const proxyRes = await fetch(proxyUrl);
                 if (!proxyRes.ok) throw new Error(`Proxy HTTP ${proxyRes.status}`);
                 return proxyRes;
@@ -397,7 +439,8 @@ export async function importAssetToProject(input: ImportAssetInput): Promise<Ass
     } catch (err: any) {
         if ((err.name === 'TypeError' || err.message === 'Failed to fetch') && sourceAsset.url.startsWith('http')) {
             console.warn(`Direct fetch failed for ${sourceAsset.url}, trying local proxy...`);
-            const proxyUrl = `http://localhost:3001/api/proxy-image?url=${encodeURIComponent(sourceAsset.url)}`;
+            const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001"
+            const proxyUrl = `${backendUrl}/api/proxy-image?url=${encodeURIComponent(sourceAsset.url)}`;
             response = await fetch(proxyUrl);
         } else {
             throw err;
@@ -447,14 +490,29 @@ export async function deleteAsset(assetId: string): Promise<boolean> {
     const bucketName = getBucketName()
 
     try {
-        // Delete from storage
-        const { error: storageError } = await db.storage
-            .from(bucketName)
-            .remove([asset.bucketPath])
+        // Check if the URL is an R2 URL
+        const isR2Url = asset.url.includes('.r2.dev') || asset.url.includes('.workers.dev')
 
-        if (storageError) {
-            console.warn(`Failed to delete asset from storage:`, storageError)
-            // Continue to delete metadata anyway
+        if (isR2Url && isR2Configured()) {
+            try {
+                // Determine r2Key from bucketPath (which is "userId/...")
+                const r2Key = asset.bucketPath.substring(asset.userId.length + 1)
+                await deleteAssetFromR2(asset.userId, r2Key)
+                console.log(`✓ Deleted general asset from R2: ${asset.bucketPath}`)
+            } catch (r2Error) {
+                console.warn(`Failed to delete asset from R2:`, r2Error)
+                // Continue to DB delete even if R2 delete fails
+            }
+        } else {
+            // Delete from storage
+            const { error: storageError } = await db.storage
+                .from(bucketName)
+                .remove([asset.bucketPath])
+
+            if (storageError) {
+                console.warn(`Failed to delete asset from storage:`, storageError)
+                // Continue to delete metadata anyway
+            }
         }
 
         // Delete from database
@@ -551,9 +609,10 @@ export async function getProjectAssetPublicUrl(projectId: string, assetId: strin
 export async function createProjectBucket(_projectId: string): Promise<boolean> {
     const dbManager = getMultiDbManager()
     const db = await dbManager.ensureActiveDbAvailable()
+    const dbId = dbManager.getCurrentActiveDbId()!
 
     const bucketName = getBucketName() // Use shared bucket
-    return ensureBucketExists(bucketName, db)
+    return ensureBucketExists(bucketName, db, dbId)
 }
 
 /**
