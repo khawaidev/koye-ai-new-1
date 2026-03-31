@@ -1,7 +1,8 @@
 import * as React from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { useState, useEffect, useRef, useMemo } from "react"
-import { Plus, Image as ImageIcon, Film, ChevronLeft, ChevronRight, Settings, X, RectangleHorizontal, RectangleVertical, Square, Search, Download, SlidersHorizontal, ChevronDown, RotateCcw } from "lucide-react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import { Plus, Image as ImageIcon, Film, ChevronLeft, ChevronRight, Settings, X, RectangleHorizontal, RectangleVertical, Square, Search, Download, SlidersHorizontal, ChevronDown, RotateCcw, Loader2, ExternalLink, Globe } from "lucide-react"
+import { searchBingImages, downloadImageSafe, type BingImageResult } from "../../services/bingImageSearch"
 import { FILTER_GROUPS, DISCOVER_GALLERY, type FilterGroup } from "../../data/discoverGallery"
 import { useAuth } from "../../hooks/useAuth"
 import { saveImageToStorage } from "../../lib/imageStorage"
@@ -133,6 +134,15 @@ export function MediaGeneration() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
   const filterPanelRef = useRef<HTMLDivElement>(null)
 
+  // ── Bing Image Search state ──
+  const [bingResults, setBingResults] = useState<BingImageResult[]>([])
+  const [isBingSearching, setIsBingSearching] = useState(false)
+  const [bingSearchError, setBingSearchError] = useState<string | null>(null)
+  const [lastBingQuery, setLastBingQuery] = useState("")
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  // Track whether we are in "search results" mode (Discover hidden)
+  const hasActiveSearch = bingResults.length > 0 || isBingSearching
+
   // ── Close dropdowns on outside click ──
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -148,6 +158,65 @@ export function MediaGeneration() {
     document.addEventListener("mousedown", handleClick)
     return () => document.removeEventListener("mousedown", handleClick)
   }, [showFilterPanel])
+
+  // ── Bing Image Search: triggered only by button click or Enter key ──
+  const executeBingSearch = useCallback(async (query: string) => {
+    const trimmed = query.trim()
+    if (!trimmed || trimmed.length < 2) return
+    // Don't re-search the same query
+    if (trimmed === lastBingQuery) return
+
+    setIsBingSearching(true)
+    setBingSearchError(null)
+    console.log(`[MediaGen] Triggering Bing search: "${trimmed}"`)
+
+    try {
+      const results = await searchBingImages(trimmed)
+      setBingResults(results)
+      setLastBingQuery(trimmed)
+    } catch (err) {
+      console.error("[MediaGen] Bing search error:", err)
+      setBingSearchError(err instanceof Error ? err.message : "Search failed")
+      setBingResults([])
+    } finally {
+      setIsBingSearching(false)
+    }
+  }, [lastBingQuery])
+
+  // Handle Enter key on search bar for instant search
+  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault()
+      executeBingSearch(searchQuery)
+    }
+  }, [searchQuery, executeBingSearch])
+
+  // Handle search button click
+  const handleSearchClick = useCallback(() => {
+    executeBingSearch(searchQuery)
+  }, [searchQuery, executeBingSearch])
+
+  // Clear Bing results when search query is emptied
+  const handleSearchQueryChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value
+    setSearchQuery(val)
+    // When user clears the search bar, clear results and return to Discover
+    if (!val.trim()) {
+      setBingResults([])
+      setLastBingQuery("")
+      setBingSearchError(null)
+    }
+  }, [])
+
+  // Download handler for Bing results
+  const handleBingDownload = useCallback(async (e: React.MouseEvent, img: BingImageResult) => {
+    e.stopPropagation()
+    setDownloadingId(img.id)
+    const ext = img.originalUrl.match(/\.(jpe?g|png|webp|gif)/i)?.[1] || "png"
+    const safeName = img.title.replace(/[^a-zA-Z0-9]/g, "-").substring(0, 40).replace(/-+$/, "")
+    await downloadImageSafe(img.originalUrl || img.thumbnailUrl, `${safeName}.${ext}`)
+    setDownloadingId(null)
+  }, [])
 
   // ── Filter helpers ──
   const togglePendingFilter = (groupId: string, value: string) => {
@@ -418,10 +487,26 @@ export function MediaGeneration() {
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search communities, prompts, styles and more..."
-            className="w-full bg-background/30 backdrop-blur-3xl hover:bg-background/40 focus:bg-background/50 border border-white/10 focus:border-white/20 text-foreground pl-12 pr-14 py-4 rounded-3xl shadow-[0_8px_32px_rgba(0,0,0,0.2)] transition-all duration-500 outline-none placeholder:text-muted-foreground/40"
+            onChange={handleSearchQueryChange}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Search game assets, concepts, references..."
+            className="w-full bg-background/30 backdrop-blur-3xl hover:bg-background/40 focus:bg-background/50 border border-white/10 focus:border-white/20 text-foreground pl-12 pr-24 py-4 rounded-3xl shadow-[0_8px_32px_rgba(0,0,0,0.2)] transition-all duration-500 outline-none placeholder:text-muted-foreground/40"
           />
+          {/* Search button + loading indicator */}
+          <button
+            onClick={handleSearchClick}
+            disabled={isBingSearching || !searchQuery.trim()}
+            className={`absolute inset-y-0 right-12 flex items-center z-10 transition-all ${searchQuery.trim() ? 'text-primary hover:text-primary/80' : 'text-muted-foreground/30 pointer-events-none'}`}
+            title="Search"
+          >
+            <div className="p-1.5 rounded-xl hover:bg-white/10 transition-colors">
+              {isBingSearching ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Search className="w-5 h-5" />
+              )}
+            </div>
+          </button>
           {/* Filter button */}
           <button
             onClick={() => {
@@ -602,8 +687,117 @@ export function MediaGeneration() {
           </div>
         </div>
 
-        {/* ── Discover Grid (filtered gallery + generated media) ── */}
-        <div className="px-4 pt-4 pb-2">
+        {/* ── Bing Image Search Results (separate from Discover, not affected by filters) ── */}
+        {(bingResults.length > 0 || isBingSearching || bingSearchError) && (
+          <div className="px-4 pt-4 pb-2">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-primary" />
+                <h3 className="text-sm font-semibold text-muted-foreground tracking-wide uppercase">Search Results</h3>
+                {bingResults.length > 0 && (
+                  <span className="text-[10px] bg-primary/15 text-primary px-2 py-0.5 rounded-full font-medium">
+                    {bingResults.length} found
+                  </span>
+                )}
+              </div>
+              {bingResults.length > 0 && (
+                <button
+                  onClick={() => { setBingResults([]); setLastBingQuery(""); setSearchQuery("") }}
+                  className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline"
+                >
+                  Clear results
+                </button>
+              )}
+            </div>
+
+            {/* Error state */}
+            {bingSearchError && (
+              <div className="mb-3 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs">
+                {bingSearchError}
+              </div>
+            )}
+
+            {/* Loading skeleton */}
+            {isBingSearching && bingResults.length === 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 mb-4">
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <div key={`skel-${i}`} className="relative aspect-[3/4] rounded-lg overflow-hidden bg-muted animate-pulse">
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Loader2 className="w-5 h-5 text-muted-foreground/30 animate-spin" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Bing search result grid */}
+            {bingResults.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 mb-4">
+                {bingResults.map((img) => (
+                  <div
+                    key={img.id}
+                    onClick={() => setMaximizedMedia({ url: img.originalUrl || img.thumbnailUrl, name: img.title, type: 'image' })}
+                    className="relative aspect-[3/4] rounded-lg overflow-hidden cursor-pointer group/card hover:ring-1 hover:ring-primary/50 transition-all bg-muted"
+                  >
+                    {/* Use thumbnail for grid performance, original for maximize */}
+                    <img
+                      src={img.thumbnailUrl || img.originalUrl}
+                      alt={img.title}
+                      loading="lazy"
+                      className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover/card:scale-105"
+                      onError={(e) => {
+                        // Fallback if thumbnail fails: try original
+                        const target = e.target as HTMLImageElement
+                        if (target.src !== img.originalUrl && img.originalUrl) {
+                          target.src = img.originalUrl
+                        }
+                      }}
+                    />
+                    {/* Hover overlay */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent opacity-0 group-hover/card:opacity-100 transition-opacity duration-200" />
+
+                    {/* Bottom info + download */}
+                    <div className="absolute bottom-0 left-0 right-0 p-2 opacity-0 group-hover/card:opacity-100 transition-opacity duration-200">
+                      <p className="text-[10px] font-medium text-white truncate mb-1.5">{img.title}</p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] text-white/60 truncate max-w-[60%]">{img.sourceName}</span>
+                        <button
+                          onClick={(e) => handleBingDownload(e, img)}
+                          disabled={downloadingId === img.id}
+                          className="flex items-center gap-1 bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-[10px] font-medium px-2 py-1 rounded-full transition-all disabled:opacity-50"
+                        >
+                          {downloadingId === img.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Download className="w-3 h-3" />
+                          )}
+                          Save
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Source badge */}
+                    <div className="absolute top-1.5 right-1.5 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                      <a
+                        href={img.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center gap-0.5 bg-black/50 backdrop-blur-sm text-white/80 text-[9px] px-1.5 py-0.5 rounded-full hover:bg-black/70 transition-colors"
+                      >
+                        <ExternalLink className="w-2.5 h-2.5" />
+                        Source
+                      </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Discover Grid (filtered gallery + generated media) ── Hidden when search results are active */}
+        {!hasActiveSearch && <div className="px-4 pt-4 pb-2">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-muted-foreground tracking-wide uppercase">Discover</h3>
             {activeFilterCount > 0 && (
@@ -631,6 +825,26 @@ export function MediaGeneration() {
             )}
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+            {/* Search fallback for Discover gallery */}
+            {searchQuery.trim() && filteredGallery.length === 0 && (
+              <div className="col-span-full flex flex-col items-center justify-center py-14 px-6 text-center bg-muted/20 backdrop-blur-sm border border-dashed border-border rounded-[32px] my-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="w-16 h-16 bg-background/50 rounded-full flex items-center justify-center mb-4 shadow-inner">
+                  <Search className="w-8 h-8 text-primary/40" />
+                </div>
+                <h4 className="text-lg font-bold text-foreground mb-2">No local matches found</h4>
+                <p className="text-sm text-muted-foreground mb-8 max-w-sm">
+                  We couldn't find any results in the local gallery for <span className="text-foreground font-semibold">"{searchQuery}"</span>. Try an advanced search across the web.
+                </p>
+                <button
+                  onClick={handleSearchClick}
+                  className="flex items-center gap-3 bg-foreground text-background px-8 py-3.5 rounded-full text-sm font-bold hover:bg-foreground/90 transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 group"
+                >
+                  <Globe className="w-4 h-4 group-hover:rotate-12 transition-transform duration-500" />
+                  Advance Search
+                </button>
+              </div>
+            )}
+
             {/* Show gallery items from data file */}
             {filteredGallery.map((item) => (
               <div
@@ -698,8 +912,24 @@ export function MediaGeneration() {
                 </div>
               </div>
             ))}
+            {/* Discover More button for matched results */}
+            {searchQuery.trim() && filteredGallery.length > 0 && (
+              <div className="col-span-full flex flex-col items-center justify-center py-12 mt-10 border-t border-dashed border-border/30 animate-in fade-in slide-in-from-bottom-6 duration-700">
+                 <div className="text-center mb-6">
+                    <p className="text-xs font-medium text-muted-foreground/60 uppercase tracking-widest mb-1">End of local results</p>
+                    <h5 className="text-lg font-bold text-foreground">Can't find what you're looking for?</h5>
+                 </div>
+                 <button
+                   onClick={handleSearchClick}
+                   className="flex items-center gap-3 bg-foreground text-background px-10 py-4 rounded-full text-sm font-bold hover:bg-foreground/90 hover:scale-105 transition-all shadow-[0_15px_40px_rgba(0,0,0,0.15)] active:scale-95 group"
+                 >
+                   <Globe className="w-5 h-5 group-hover:rotate-45 transition-transform duration-500" />
+                   Discover more for "{searchQuery}"
+                 </button>
+              </div>
+            )}
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* ── Bottom Input Bar ── */}
@@ -1018,20 +1248,9 @@ export function MediaGeneration() {
               <div className="absolute bottom-4 right-4 z-[30] pointer-events-auto">
                 <button
                   onClick={async () => {
-                    try {
-                      const response = await fetch(maximizedMedia.url);
-                      const blob = await response.blob();
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = `${maximizedMedia.name.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.png`;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url);
-                    } catch (err) {
-                      console.error("Failed to download:", err);
-                    }
+                    const safeName = maximizedMedia.name.replace(/\s+/g, '-').toLowerCase()
+                    const fileName = `${safeName}-${Date.now()}.png`
+                    await downloadImageSafe(maximizedMedia.url, fileName)
                   }}
                   className="flex items-center gap-2 bg-primary/90 hover:bg-primary backdrop-blur-xl text-primary-foreground px-6 py-3 rounded-full border border-white/10 transition-all shadow-xl hover:scale-105 active:scale-95"
                 >

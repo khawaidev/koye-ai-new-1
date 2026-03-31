@@ -114,7 +114,7 @@ export function Model3DGeneration() {
   const [generatedModels, setGeneratedModels] = useState<GeneratedModel[]>([])
   const [selectedModelIndex, setSelectedModelIndex] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isRigging, setIsRigging] = useState(false)
   const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({})
 
