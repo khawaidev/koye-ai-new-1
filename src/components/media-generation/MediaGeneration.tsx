@@ -1,7 +1,7 @@
 import * as React from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { Plus, Image as ImageIcon, Film, ChevronLeft, ChevronRight, Settings, X, RectangleHorizontal, RectangleVertical, Square, Search, Download, SlidersHorizontal, ChevronDown, RotateCcw, Loader2, ExternalLink, Globe } from "lucide-react"
+import { Plus, Image as ImageIcon, Film, ChevronLeft, ChevronRight, X, RectangleHorizontal, RectangleVertical, Square, Search, Download, SlidersHorizontal, ChevronDown, RotateCcw, Loader2, ExternalLink, Globe, Volume2, VolumeX, Clock } from "lucide-react"
 import { searchBingImages, downloadImageSafe, type BingImageResult } from "../../services/bingImageSearch"
 import { FILTER_GROUPS, DISCOVER_GALLERY, type FilterGroup } from "../../data/discoverGallery"
 import { useAuth } from "../../hooks/useAuth"
@@ -107,12 +107,13 @@ export function MediaGeneration() {
 
   // ── Image state ──
   const [imageModel, setImageModel] = useState<RunwayImageModel>("gen4_image_turbo")
-  const [imageRatio, setImageRatio] = useState<RunwayRatio>("1024:1024")
+  const [imageRatio, setImageRatio] = useState<RunwayRatio>("720:1280")
 
   // ── Video state ──
-  const [videoModel, setVideoModel] = useState<RunwayVideoModel>("gen4.5")
-  const [videoRatio, setVideoRatio] = useState<RunwayVideoRatio>("1280:720")
+  const [videoModel, setVideoModel] = useState<RunwayVideoModel>("gen4_turbo")
+  const [videoRatio, setVideoRatio] = useState<RunwayVideoRatio>("720:1280")
   const [videoDuration, setVideoDuration] = useState<number>(10)
+  const [videoWithAudio, setVideoWithAudio] = useState<boolean>(true)
 
   // ── Maximization state ──
   const [maximizedMedia, setMaximizedMedia] = useState<{ url: string, name: string, type: 'image' | 'video' } | null>(null)
@@ -122,7 +123,6 @@ export function MediaGeneration() {
   const [attachedImagePreview, setAttachedImagePreview] = useState<string | null>(null)
 
   // ── Settings panel ──
-  const [showSettings, setShowSettings] = useState(false)
   const [showRatioSelect, setShowRatioSelect] = useState(false)
   const [showModelSelect, setShowModelSelect] = useState(false)
 
@@ -302,7 +302,7 @@ export function MediaGeneration() {
   // ── Determine which models support image input ──
   const modelSupportsImage = () => {
     if (genType === "image") return true // referenceImages supported for all image models
-    if (genType === "video") return videoModel === "gen4.5" || videoModel === "gen4_turbo"
+    if (genType === "video") return videoModel === "gen4.5" || videoModel === "gen4_turbo" || videoModel === "veo3.1" || videoModel === "veo3.1_fast"
     return false
   }
 
@@ -429,6 +429,7 @@ export function MediaGeneration() {
           ratio: videoRatio,
           duration: videoDuration,
           promptImage: attachedUrl,
+          withAudio: videoWithAudio,
         })
         const predictionId = uuidv4()
         addGeneratedVideo({
@@ -513,9 +514,8 @@ export function MediaGeneration() {
               if (!showFilterPanel) setPendingFilters({ ...appliedFilters })
               setShowFilterPanel(!showFilterPanel)
             }}
-            className={`filter-toggle-btn absolute inset-y-0 right-3 flex items-center z-10 transition-colors ${
-              activeFilterCount > 0 ? 'text-primary' : 'text-muted-foreground/60 hover:text-foreground'
-            }`}
+            className={`filter-toggle-btn absolute inset-y-0 right-3 flex items-center z-10 transition-colors ${activeFilterCount > 0 ? 'text-primary' : 'text-muted-foreground/60 hover:text-foreground'
+              }`}
           >
             <div className="relative p-1.5 rounded-xl hover:bg-white/10 transition-colors">
               <SlidersHorizontal className="w-5 h-5" />
@@ -599,11 +599,10 @@ export function MediaGeneration() {
                                     <button
                                       key={opt.value}
                                       onClick={() => togglePendingFilter(group.id, opt.value)}
-                                      className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-all duration-200 border ${
-                                        isSelected
-                                          ? 'bg-primary text-primary-foreground border-primary shadow-sm scale-[1.02]'
-                                          : 'bg-white/5 text-muted-foreground border-white/10 hover:bg-white/10 hover:text-foreground hover:border-white/20'
-                                      }`}
+                                      className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-all duration-200 border ${isSelected
+                                        ? 'bg-primary text-primary-foreground border-primary shadow-sm scale-[1.02]'
+                                        : 'bg-white/5 text-muted-foreground border-white/10 hover:bg-white/10 hover:text-foreground hover:border-white/20'
+                                        }`}
                                     >
                                       {opt.label}
                                     </button>
@@ -915,17 +914,17 @@ export function MediaGeneration() {
             {/* Discover More button for matched results */}
             {searchQuery.trim() && filteredGallery.length > 0 && (
               <div className="col-span-full flex flex-col items-center justify-center py-12 mt-10 border-t border-dashed border-border/30 animate-in fade-in slide-in-from-bottom-6 duration-700">
-                 <div className="text-center mb-6">
-                    <p className="text-xs font-medium text-muted-foreground/60 uppercase tracking-widest mb-1">End of local results</p>
-                    <h5 className="text-lg font-bold text-foreground">Can't find what you're looking for?</h5>
-                 </div>
-                 <button
-                   onClick={handleSearchClick}
-                   className="flex items-center gap-3 bg-foreground text-background px-10 py-4 rounded-full text-sm font-bold hover:bg-foreground/90 hover:scale-105 transition-all shadow-[0_15px_40px_rgba(0,0,0,0.15)] active:scale-95 group"
-                 >
-                   <Globe className="w-5 h-5 group-hover:rotate-45 transition-transform duration-500" />
-                   Discover more for "{searchQuery}"
-                 </button>
+                <div className="text-center mb-6">
+                  <p className="text-xs font-medium text-muted-foreground/60 uppercase tracking-widest mb-1">End of local results</p>
+                  <h5 className="text-lg font-bold text-foreground">Can't find what you're looking for?</h5>
+                </div>
+                <button
+                  onClick={handleSearchClick}
+                  className="flex items-center gap-3 bg-foreground text-background px-10 py-4 rounded-full text-sm font-bold hover:bg-foreground/90 hover:scale-105 transition-all shadow-[0_15px_40px_rgba(0,0,0,0.15)] active:scale-95 group"
+                >
+                  <Globe className="w-5 h-5 group-hover:rotate-45 transition-transform duration-500" />
+                  Discover more for "{searchQuery}"
+                </button>
               </div>
             )}
           </div>
@@ -969,8 +968,14 @@ export function MediaGeneration() {
             {/* Image upload button (top left inside the bar) */}
             <div className="flex flex-col sm:flex-row items-start pt-2 px-2 pb-0">
               {modelSupportsImage() && (
-                <label className="shrink-0 p-2 cursor-pointer text-muted-foreground hover:text-foreground transition-colors rounded-lg hover:bg-muted ml-1 mt-1">
-                  <Plus className="w-5 h-5" />
+                <label className="shrink-0 w-16 h-16 flex flex-col items-center justify-center cursor-pointer text-muted-foreground hover:text-foreground hover:bg-muted transition-all rounded-xl ml-2 mt-2 border border-border/50 bg-background/50 hover:scale-[1.02] shadow-sm group">
+                  <div className="relative">
+                    <ImageIcon className="w-7 h-7" />
+                    <div className="absolute -top-1 -right-1 bg-primary rounded-full p-0.5">
+                      <Plus className="w-2.5 h-2.5 text-primary-foreground" />
+                    </div>
+                  </div>
+                  <span className="text-[9px] font-bold mt-1 uppercase tracking-tighter opacity-60 group-hover:opacity-100">Add Image</span>
                   <input
                     type="file"
                     accept="image/*"
@@ -1096,7 +1101,7 @@ export function MediaGeneration() {
                       {Object.entries(
                         genType === "image"
                           ? { "gen4_image_turbo": "gen4_image_turbo", "gen4_image": "gen4_image", "gemini_2.5_flash": "gemini_2.5_flash" }
-                          : { "gen4.5": "gen4.5", "gen4_turbo": "gen4_turbo", "veo3.1": "veo3.1", "veo3.1_fast": "veo3.1_fast", "veo3": "veo3" }
+                          : { "gen4.5": "gen4.5", "gen4_turbo": "gen4_turbo", "veo3.1": "veo3.1", "veo3.1_fast": "veo3.1_fast" }
                       ).map(([val, label]) => (
                         <button
                           key={val}
@@ -1118,27 +1123,40 @@ export function MediaGeneration() {
                 </div>
               </div>
 
-              {/* Right side: settings + generate */}
+              {/* Right side: video controls (duration + audio) + generate */}
               <div className="flex items-center gap-2">
-                {/* Settings button */}
-                <button
-                  onClick={() => setShowSettings(!showSettings)}
-                  className={`p-1.5 rounded-full transition-colors ${showSettings ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
-                    }`}
-                >
-                  <Settings className="w-4 h-4" />
-                </button>
-
+                {genType === "video" && (
+                  <div className="flex items-center gap-1 bg-background border border-border rounded-full p-0.5">
+                    {/* Duration Toggle */}
+                    <button
+                      onClick={() => setVideoDuration(prev => prev === 5 ? 10 : 5)}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
+                      title="Set video duration"
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      {videoDuration}s
+                    </button>
+                    {/* Audio Toggle */}
+                    <button
+                      onClick={() => setVideoWithAudio(!videoWithAudio)}
+                      className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${videoWithAudio ? "text-primary hover:bg-primary/10" : "text-muted-foreground hover:bg-muted"
+                        }`}
+                      title={videoWithAudio ? "Audio enabled" : "Audio disabled"}
+                    >
+                      {videoWithAudio ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                )}
                 {/* Generate button */}
                 <button
                   onClick={handleGenerate}
-                  disabled={isGenerating || !prompt.trim() || !isAuthenticated}
-                  className="w-8 h-8 bg-foreground rounded-full flex items-center justify-center hover:bg-foreground/90 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                  disabled={isGenerating || !prompt.trim() || !isAuthenticated || (genType === "video" && videoModel === "gen4_turbo" && !attachedImage)}
+                  className="w-10 h-10 bg-foreground text-background rounded-full flex items-center justify-center hover:scale-105 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
                 >
                   {isGenerating ? (
-                    <div className="w-4 h-4 border-2 border-background border-t-transparent rounded-full animate-spin" />
+                    <div className="w-5 h-5 border-2 border-background border-t-transparent rounded-full animate-spin" />
                   ) : (
-                    <svg className="w-4 h-4 text-background" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="12" y1="19" x2="12" y2="5" />
                       <polyline points="5 12 12 5 19 12" />
                     </svg>
@@ -1147,38 +1165,6 @@ export function MediaGeneration() {
               </div>
             </div>
           </div>
-
-          {/* ── Settings Panel (above bar, slides up) ── */}
-          {showSettings && (
-            <div className="absolute bottom-[calc(100%+8px)] right-0 w-64 bg-background border border-border rounded-xl p-4 space-y-3 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100">
-              {/* Duration (video only) */}
-              {genType === "video" ? (
-                <div>
-                  <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
-                    Duration (seconds)
-                  </label>
-                  <select
-                    value={videoDuration}
-                    onChange={(e) => setVideoDuration(parseInt(e.target.value))}
-                    className="w-full bg-muted text-foreground text-sm px-3 py-2 rounded-lg border border-border focus:outline-none focus:ring-1 focus:ring-ring"
-                  >
-                    {[2, 3, 4, 5, 6, 7, 8, 9, 10].map(d => (
-                      <option key={d} value={d}>{d}s</option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">No additional settings</p>
-              )}
-
-              {/* Info about image requirement */}
-              {genType === "video" && videoModel === "gen4_turbo" && (
-                <p className="text-[11px] text-amber-500 font-medium">
-                  ⚠ gen4_turbo requires a prompt image. Use the + button to attach one.
-                </p>
-              )}
-            </div>
-          )}
         </div>
       </div>
 

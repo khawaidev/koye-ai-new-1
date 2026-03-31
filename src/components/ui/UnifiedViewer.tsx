@@ -6,6 +6,7 @@ import { ImageViewer } from "../image-viewer/ImageViewer"
 import { ModelViewer } from "../model-viewer/ModelViewer"
 import { CodeViewer } from "./CodeViewer"
 
+
 export function UnifiedViewer() {
     const selectedAsset = useAppStore((state) => state.selectedAsset)
     const images = useAppStore((state) => state.images)
@@ -100,12 +101,13 @@ export function UnifiedViewer() {
         if (dataUrl && (dataUrl.startsWith('data:') || dataUrl.startsWith('http') || dataUrl.startsWith('blob:'))) {
             console.log(`[UnifiedViewer] Rendering IMAGE from resolved URL: ${dataUrl}`)
             return (
-                <div className="flex h-full items-center justify-center bg-muted/20 p-4">
+                <div className="flex h-full items-center justify-center bg-muted/20 p-4 relative">
                     <img
                         src={dataUrl}
                         alt={assetName}
                         className="max-h-full max-w-full object-contain"
                     />
+
                 </div>
             )
         }
@@ -116,12 +118,13 @@ export function UnifiedViewer() {
             // Direct URL or data URL
             if (imageContent.startsWith('data:') || imageContent.startsWith('http') || imageContent.startsWith('blob:')) {
                 return (
-                    <div className="flex h-full items-center justify-center bg-muted/20 p-4">
+                    <div className="flex h-full items-center justify-center bg-muted/20 p-4 relative">
                         <img
                             src={imageContent}
                             alt={assetName}
                             className="max-h-full max-w-full object-contain"
                         />
+
                     </div>
                 )
             }
@@ -129,31 +132,37 @@ export function UnifiedViewer() {
             const extractedUrl = extractUrlFromContent(imageContent)
             if (extractedUrl) {
                 return (
-                    <div className="flex h-full items-center justify-center bg-muted/20 p-4">
+                    <div className="flex h-full items-center justify-center bg-muted/20 p-4 relative">
                         <img
                             src={extractedUrl}
                             alt={assetName}
                             className="max-h-full max-w-full object-contain"
                         />
+
                     </div>
                 )
             }
         }
 
-        // It's an Image object from the store
         if ('view' in selectedAsset && 'url' in selectedAsset) {
-            return <ImageViewer images={images} />
+            return (
+                <div className="relative h-full w-full">
+                    <ImageViewer images={images} />
+
+                </div>
+            )
         }
 
         // Fallback: try to show as image if URL exists in any form
         if ((selectedAsset as any).url) {
             return (
-                <div className="flex h-full items-center justify-center bg-muted/20 p-4">
+                <div className="flex h-full items-center justify-center bg-muted/20 p-4 relative">
                     <img
                         src={(selectedAsset as any).url}
                         alt={assetName}
                         className="max-h-full max-w-full object-contain"
                     />
+
                 </div>
             )
         }

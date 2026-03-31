@@ -1,12 +1,15 @@
-import { ArrowRight, Box, Download, FileText, Image as ImageIcon, Loader2, Music, Pencil, Video, X } from "lucide-react"
+import { ArrowRight, Box, Download, FileText, Image as ImageIcon, Loader2, Music, Video } from "lucide-react"
 import { useEffect, useState } from "react"
 import { cn } from "../../lib/utils"
 import { create3DModelTask, queryTaskStatus } from "../../services/hitem3d"
 import { getImageById } from "../../services/multiDbDataService"
 import { editImageWithRunway } from "../../services/runwayml"
 import { editImageWithAicc } from "../../services/aicc"
+
+import { createRiggingTask, getRiggingTask } from "../../services/tripo"
 import { useAppStore } from "../../store/useAppStore"
 import { analyzeImageBackground, isObjectLight } from "../../utils/imageAnalysis"
+import { ImageEditOverlay } from "../ui/ImageEditOverlay"
 
 
 // Credit costs for 3D model generation
@@ -22,8 +25,13 @@ export function BuilderInspector() {
     const selectedAsset = useAppStore((state) => state.selectedAsset)
     const addGeneratedFile = useAppStore((state) => state.addGeneratedFile)
     const setSelectedAsset = useAppStore((state) => state.setSelectedAsset)
-    const isImageEditMode = useAppStore((state) => state.isImageEditMode)
-    const setIsImageEditMode = useAppStore((state) => state.setIsImageEditMode)
+
+
+
+    // Auto rig internal state
+    const [selectedRigType, setSelectedRigType] = useState("biped")
+    const [isRigging, setIsRigging] = useState(false)
+    const [rigStatus, setRigStatus] = useState("")
 
 
     // Image editing state — now managed via store (isImageEditMode)
@@ -49,11 +57,6 @@ export function BuilderInspector() {
 
     // Resolved image URL (from DB if ID available)
     const [resolvedImageUrl, setResolvedImageUrl] = useState<string | undefined>(undefined)
-
-    // Reset edit mode when selectedAsset changes
-    useEffect(() => {
-        setIsImageEditMode(false)
-    }, [selectedAsset])
 
     // Resolve image URL by ID if available
     useEffect(() => {
@@ -110,8 +113,7 @@ export function BuilderInspector() {
         return { icon: FileText, label: 'File' }
     }
 
-    const { icon: Icon, label } = getAssetInfo(selectedAsset)
-    const name = (selectedAsset as any).name || (selectedAsset as any).path?.split('/').pop() || 'Unknown'
+    const { label } = getAssetInfo(selectedAsset)
     const path = (selectedAsset as any).path || 'Unknown path'
     const size = (selectedAsset as any).size ? `${((selectedAsset as any).size / 1024).toFixed(2)} KB` : 'Unknown'
     const created = (selectedAsset as any).createdAt ? new Date((selectedAsset as any).createdAt).toLocaleString() : 'Unknown'
@@ -148,7 +150,59 @@ export function BuilderInspector() {
         imageUrl = (selectedAsset as any).url || (selectedAsset as any).content
     }
 
-    // handleEditImage is now handled by the ImageEditForm component in the viewer area
+
+    // Handle auto rig for 3D model
+    const handleAutoRig = async () => {
+        if (!imageUrl) return
+        
+        setIsRigging(true)
+        setRigStatus("Importing model to Tripo...")
+        
+        try {
+            const taskId = await createRiggingTask({ model_url: imageUrl, rig_type: selectedRigType })
+            
+            let isComplete = false
+            let attempts = 0
+            while (!isComplete && attempts < 120) { // Timeout after 120 * 5 = 600s
+                attempts++
+                setRigStatus(`Rigging model... (${attempts * 5}s)`)
+                await new Promise(r => setTimeout(r, 5000))
+                
+                const taskResult = await getRiggingTask(taskId)
+                if (taskResult.status === "SUCCEEDED" && taskResult.result?.rigged_character_glb_url) {
+                    isComplete = true
+                    const riggedUrl = taskResult.result.rigged_character_glb_url
+                    const timestamp = Date.now()
+                    const rigName = `rig_${String(timestamp).slice(-7)}.glb`
+                    const rigPath = `3d-models/${rigName}`
+
+                    addGeneratedFile(rigPath, riggedUrl)
+
+                    setSelectedAsset({
+                        name: rigName,
+                        path: rigPath,
+                        type: "model",
+                        url: riggedUrl,
+                        format: "glb",
+                        status: "READY",
+                    } as any)
+                    
+                    alert("Auto rigging successful!")
+                } else if (taskResult.status === "FAILED" || taskResult.status === "CANCELED") {
+                    throw new Error(`Rigging task failed: ${taskResult.task_error?.message || 'Unknown error'}`)
+                }
+            }
+            if (!isComplete) {
+                throw new Error("Rigging task timed out")
+            }
+        } catch (error) {
+            console.error(error)
+            alert(error instanceof Error ? error.message : "Failed to auto rig.")
+        } finally {
+            setIsRigging(false)
+            setRigStatus("")
+        }
+    }
 
     // Handle generate 3D model button click
     const handleGenerate3DClick = async () => {
@@ -245,7 +299,7 @@ export function BuilderInspector() {
 
             // Store both for comparison
             setOriginalImageUrl(imageUrl)
-            setNewBackgroundImageUrl(newImageUrl)
+            setNewBackgroundImageUrl(newImageUrl || "")
             setShowBackgroundComparison(true)
         } catch (error) {
             console.error("Error replacing background:", error)
@@ -346,19 +400,13 @@ export function BuilderInspector() {
 
     return (
         <>
-            <div className="w-64 border-l-2 border-border bg-background flex flex-col h-full font-mono">
-                <div className="px-4 py-3 border-b-2 border-border bg-muted/50">
-                    <div className="flex items-center gap-2 mb-2">
-                        <Icon className="h-4 w-4 text-foreground" />
-                        <span className="font-bold text-xs tracking-wider text-foreground">{label.toUpperCase()} INSPECTOR</span>
-                    </div>
-                    <div className="text-xs break-all font-bold text-foreground truncate" title={name}>{name}</div>
-                </div>
+            <div className="w-full border-l border-white/10 bg-background flex flex-col h-full font-mono">
+
 
                 <div className="p-4 space-y-4 overflow-y-auto flex-1 bg-background">
                     <div>
                         <label className="block text-[10px] font-bold text-muted-foreground mb-1.5 tracking-wider uppercase">PATH</label>
-                        <div className="text-xs break-all bg-muted/30 border border-border p-2 rounded font-mono text-foreground">{path}</div>
+                        <div className="text-xs break-all bg-muted/30 border border-white/10 p-2 rounded font-mono text-foreground">{path}</div>
                     </div>
 
                     <div>
@@ -404,79 +452,105 @@ export function BuilderInspector() {
                     </div>
                 </div>
 
-                {/* Image action buttons */}
+                {/* Image Actions / Edit Mode */}
                 {isImage && (
-                    <div className="p-4 border-t-2 border-border space-y-2">
-                        {/* Edit Image Button */}
-                        <button
-                            onClick={() => setIsImageEditMode(!isImageEditMode)}
-                            disabled={isProcessing && !isImageEditMode}
-                            className={cn(
-                                "w-full px-3 py-2 text-xs font-bold transition-all duration-150",
-                                "border-2 border-border shadow-[2px_2px_0px_0px_currentColor]",
-                                "hover:scale-[1.02] active:scale-100 active:shadow-[1px_1px_0px_0px_currentColor]",
-                                isImageEditMode
-                                    ? "bg-foreground text-background"
-                                    : "bg-background text-foreground",
-                                isProcessing && !isImageEditMode && "opacity-50 cursor-not-allowed"
-                            )}
-                        >
-                            {isImageEditMode ? (
-                                <span className="flex items-center justify-center gap-2">
-                                    <X className="h-3 w-3" />
-                                    Close
-                                </span>
-                            ) : (
-                                <span className="flex items-center justify-center gap-2">
-                                    <Pencil className="h-3 w-3" />
-                                    Edit Image
-                                </span>
-                            )}
-                        </button>
-
-                        {/* Generate 3D Model Button */}
-                        <button
-                            onClick={handleGenerate3DClick}
-                            disabled={isProcessing}
-                            className={cn(
-                                "w-full px-3 py-2 text-xs font-bold transition-all duration-150",
-                                "bg-foreground text-background border-2 border-border shadow-[2px_2px_0px_0px_hsl(var(--background)/0.3)]",
-                                "hover:scale-[1.02] active:scale-100 active:shadow-[1px_1px_0px_0px_hsl(var(--background)/0.3)]",
-                                isProcessing && "opacity-50 cursor-not-allowed"
-                            )}
-                        >
-                            {isGenerating3D || isReplacingBackground ? (
-                                <span className="flex items-center justify-center gap-2">
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                    Loading...
-                                </span>
-                            ) : (
-                                <span className="flex items-center justify-center gap-2">
-                                    <Box className="h-3 w-3" />
-                                    Generate 3D Model
-                                </span>
-                            )}
-                        </button>
+                    <div className="p-4 border-t border-white/10 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Image Tools</h4>
+                        </div>
+                        <ImageEditOverlay imageUrl={imageUrl || ""} isInline={true}>
+                            {/* Generate 3D Model Button */}
+                            <button
+                                onClick={handleGenerate3DClick}
+                                disabled={isProcessing}
+                                className={cn(
+                                    "w-full h-10 px-3 py-2 text-xs font-bold transition-all duration-150 flex items-center justify-center gap-2",
+                                    "bg-white/10 text-white border border-white/20 rounded-full",
+                                    "hover:bg-white/20",
+                                    isProcessing && "opacity-50 cursor-not-allowed"
+                                )}
+                            >
+                                {isGenerating3D || isReplacingBackground ? (
+                                    <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        <span>LOADING...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Box className="h-4 w-4" />
+                                        <span className="text-xs font-bold uppercase tracking-widest">GENERATE 3D MODEL</span>
+                                    </>
+                                )}
+                            </button>
+                        </ImageEditOverlay>
                     </div>
                 )}
 
                 {/* Model action buttons */}
                 {isModel && (
-                    <div className="p-4 border-t-2 border-border space-y-2">
+                    <div className="p-4 border-t border-white/10 space-y-4">
                         {/* Download Model Button */}
                         <button
                             onClick={handleDownloadModel}
                             disabled={!imageUrl}
                             className={cn(
                                 "w-full px-3 py-2 text-xs font-bold transition-all duration-150 flex items-center justify-center gap-2",
-                                "bg-foreground text-background border-2 border-border shadow-[2px_2px_0px_0px_hsl(var(--background)/0.3)]",
-                                "hover:scale-[1.02] active:scale-100 active:shadow-[1px_1px_0px_0px_hsl(var(--background)/0.3)]",
-                                !imageUrl && "opacity-50 cursor-not-allowed"
+                                "bg-background text-foreground border-2 border-border shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,1)]",
+                                "hover:scale-[1.02] active:scale-100 active:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] dark:active:shadow-[1px_1px_0px_0px_rgba(255,255,255,1)]",
+                                !imageUrl && "opacity-50 cursor-not-allowed border-muted-foreground text-muted-foreground shadow-none"
                             )}
                         >
                             <Download className="h-4 w-4" />
                             Download Model
                         </button>
+                        
+                        {/* Auto Rigging */}
+                        <div className="space-y-3 p-3 border border-white/10 rounded-lg bg-foreground/5">
+                             <div className="space-y-1 text-center mb-1">
+                                 <h4 className="text-[11px] font-bold uppercase tracking-wider text-foreground">Tripo Auto Rig</h4>
+                                 <p className="text-[9px] text-muted-foreground">Applies skeletal rig and animations.</p>
+                             </div>
+                             
+                             <div className="space-y-1">
+                                 <label className="text-[10px] uppercase font-bold text-muted-foreground">Rig Type</label>
+                                 <select 
+                                    value={selectedRigType}
+                                    onChange={(e) => setSelectedRigType(e.target.value)}
+                                    disabled={isRigging || !imageUrl}
+                                    className="w-full p-2 text-xs border border-border bg-background focus:outline-none font-sans"
+                                 >
+                                      <option value="biped">Biped (Humanoid)</option>
+                                      <option value="quadruped">Quadruped (4 limbs)</option>
+                                      <option value="hexapod">Hexapod (6 limbs)</option>
+                                      <option value="octopod">Octopod (8 limbs)</option>
+                                      <option value="avian">Avian (Bird)</option>
+                                      <option value="serpentine">Serpentine (Snake)</option>
+                                      <option value="aquatic">Aquatic (Fish)</option>
+                                 </select>
+                             </div>
+                             
+                             <button
+                                 onClick={handleAutoRig}
+                                 disabled={isRigging || !imageUrl}
+                                 className={cn(
+                                    "w-full px-3 py-2 mt-2 text-xs font-bold transition-all duration-150 flex items-center justify-center gap-2",
+                                    "bg-foreground text-background border-2 border-border shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] dark:shadow-[2px_2px_0px_0px_rgba(255,255,255,1)]",
+                                    "hover:scale-[1.02] active:scale-100 active:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] dark:active:shadow-[1px_1px_0px_0px_rgba(255,255,255,1)]",
+                                    (isRigging || !imageUrl) && "opacity-50 cursor-not-allowed transform-none hover:scale-100 shadow-none border border-border"
+                                 )}
+                             >
+                                 {isRigging ? (
+                                    <>
+                                        <Loader2 className="h-3 w-3 animate-spin"/>
+                                        <span className="truncate max-w-[120px]">{rigStatus}</span>
+                                    </>
+                                 ) : (
+                                    <>
+                                        Auto Rig Model
+                                    </>
+                                 )}
+                             </button>
+                        </div>
                     </div>
                 )}
             </div>

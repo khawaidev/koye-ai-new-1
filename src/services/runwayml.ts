@@ -51,7 +51,7 @@ export type RunwayRatio =
 
 export type RunwayImageModel = "gen4_image_turbo" | "gen4_image" | "gemini_2.5_flash"
 
-export type RunwayVideoModel = "gen4.5" | "gen4_turbo" | "gen3a_turbo" | "veo3.1" | "veo3.1_fast" | "veo3"
+export type RunwayVideoModel = "gen4.5" | "gen4_turbo" | "alpha4_turbo" | "gen3a_turbo" | "veo3.1" | "veo3.1_fast" | "veo3"
 export type RunwayVideoRatio = "1280:720" | "720:1280" | "1104:832" | "960:960" | "832:1104" | "1584:672"
 
 // ─── Core helpers ────────────────────────────────────────────────────────────
@@ -263,6 +263,7 @@ export async function generateVideoWithRunway(
     duration?: number
     seed?: number
     promptImage?: string
+    withAudio?: boolean
   }
 ): Promise<string> {
   const isImageToVideo = !!options?.promptImage;
@@ -273,6 +274,7 @@ export async function generateVideoWithRunway(
     promptText,
     ratio: options?.ratio || "1280:720",
     duration: options?.duration || 10,
+    exploreAudio: options?.withAudio ?? true,
   }
 
   if (isImageToVideo) {

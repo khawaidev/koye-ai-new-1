@@ -1,18 +1,20 @@
 import { Check, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useParams, useSearchParams } from "react-router-dom"
+import { cn } from "../lib/utils"
 import iconJpg from "../assets/icon.jpg"
 import { BuilderHeader } from "../components/builder/BuilderHeader"
 import { BuilderInspector } from "../components/builder/BuilderInspector"
 import { BuilderSidebar } from "../components/builder/BuilderSidebar"
 import { BuilderWelcomeModal } from "../components/builder/BuilderWelcomeModal"
-import { ImageEditForm } from "../components/builder/ImageEditForm"
+
 import { UnifiedViewer } from "../components/ui/UnifiedViewer"
 import { useAuth } from "../hooks/useAuth"
 import { deleteProjectFile, loadProjectFilesFromStorage, saveProjectFilesToStorage } from "../services/projectFiles"
 import { useAppStore } from "../store/useAppStore"
 import { detectFileType } from "../utils/fileTypeDetection"
 import { bulkSaveVFS } from "../services/vfs"
+import { ProjectLoader } from "../components/ui/ProjectLoader"
 
 type HistoryState = {
     files: Record<string, string>
@@ -42,8 +44,6 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
         generatedFiles,
         setGeneratedFiles,
         githubConnection,
-        isImageEditMode,
-        setIsImageEditMode,
         currentProject,
     } = useAppStore()
 
@@ -438,56 +438,67 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
         setShowWelcome(false)
     }
 
-    if (isLoading) {
-        return (
-            <div className="flex h-screen w-full items-center justify-center bg-background">
-                <div className="flex flex-col items-center gap-4">
-                    <div className="h-14 w-14 rounded-full overflow-hidden border-2 border-foreground bg-background animate-spin-think">
-                        <img src={iconJpg} alt="Loading..." className="h-full w-full object-cover" />
-                    </div>
-                    <div className="font-mono text-sm font-bold text-foreground animate-pulse">
-                        Loading Project...
-                    </div>
-                </div>
-            </div>
-        )
-    }
+    const [inspectorWidth, setInspectorWidth] = useState(320)
+    const [isResizingInspector, setIsResizingInspector] = useState(false)
+    const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(false)
 
-    // Render logic to switch between viewer and image edit form
-    const renderBuilderViewerArea = () => {
-        if (isImageEditMode && selectedAsset) {
-            // Resolve image URL from multiple sources
-            const assetPath = (selectedAsset as any).path
-            const files = useAppStore.getState().generatedFiles || {}
-            let imgUrl = (selectedAsset as any).url || (selectedAsset as any).content
-            if (assetPath && files[assetPath]) {
-                const fc = files[assetPath]
-                if (fc.startsWith('http') || fc.startsWith('data:') || fc.startsWith('blob:')) {
-                    imgUrl = fc
-                } else {
-                    const urlMatch = fc.match(/\**URL:\**\s*(https?:\/\/[^\s\n*)]+)/i) || fc.match(/# URL:\s*(https?:\/\/[^\s\n]+)/i)
-                    if (urlMatch) {
-                        imgUrl = urlMatch[1]
-                    }
-                }
-            }
-            const imgName = (selectedAsset as any).name || assetPath?.split('/').pop() || 'image.png'
+    // Handle Inspector Resizing
+    const startResizingInspector = useCallback((e: React.MouseEvent) => {
+        e.preventDefault()
+        setIsResizingInspector(true)
+    }, [])
 
-            if (imgUrl) {
-                return (
-                    <ImageEditForm
-                        sourceImageUrl={imgUrl}
-                        sourceImageName={imgName}
-                        onClose={() => setIsImageEditMode(false)}
-                    />
-                )
+    const stopResizingInspector = useCallback(() => {
+        setIsResizingInspector(false)
+    }, [])
+
+    const resizeInspector = useCallback((e: MouseEvent) => {
+        if (isResizingInspector) {
+            const newWidth = window.innerWidth - e.clientX
+            if (newWidth < 50) {
+                setInspectorWidth(0)
+                setIsInspectorCollapsed(true)
+            } else {
+                setInspectorWidth(Math.min(800, Math.max(200, newWidth)))
+                setIsInspectorCollapsed(false)
             }
         }
-        return <UnifiedViewer />
+    }, [isResizingInspector])
+
+    useEffect(() => {
+        if (isResizingInspector) {
+            window.addEventListener('mousemove', resizeInspector)
+            window.addEventListener('mouseup', stopResizingInspector)
+        } else {
+            window.removeEventListener('mousemove', resizeInspector)
+            window.removeEventListener('mouseup', stopResizingInspector)
+        }
+        return () => {
+            window.removeEventListener('mousemove', resizeInspector)
+            window.removeEventListener('mouseup', stopResizingInspector)
+        }
+    }, [isResizingInspector, resizeInspector, stopResizingInspector])
+
+    // Logic to reopen Inspector by dragging from the right screen edge
+    const handleRightEdgeDrag = useCallback((e: React.MouseEvent) => {
+         if (isInspectorCollapsed && e.clientX > window.innerWidth - 10) {
+              startResizingInspector(e)
+         }
+    }, [isInspectorCollapsed, startResizingInspector])
+
+    if (isLoading) {
+        return <ProjectLoader />
     }
 
     return (
-        <div className="flex flex-col h-full bg-background overflow-hidden font-mono text-foreground">
+        <div 
+            className="flex flex-col h-full bg-background overflow-hidden font-mono text-foreground select-none"
+            onMouseMove={(e) => {
+                 if (isInspectorCollapsed && e.clientX > window.innerWidth - 10) {
+                      // Optional: show a hint or allow dragging to reopen
+                 }
+            }}
+        >
             <BuilderHeader
                 projectName={projectName}
                 onUndo={handleUndo}
@@ -497,7 +508,20 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
                 canRedo={canRedo}
             />
 
-            <div className="flex-1 flex min-h-0 border-t-2 border-border">
+            <div className="flex-1 flex min-h-0 border-t border-white/10 relative">
+                {/* Reopen Trigger Zone (Extreme Right) */}
+                {isInspectorCollapsed && (
+                    <div 
+                        className="absolute right-0 top-0 bottom-0 w-2 z-[60] cursor-ew-resize hover:bg-white/5 transition-colors"
+                        onMouseDown={(e) => {
+                             setIsInspectorCollapsed(false)
+                             setInspectorWidth(200)
+                             startResizingInspector(e)
+                        }}
+                        onMouseMove={handleRightEdgeDrag}
+                    />
+                )}
+
                 {/* Left Sidebar - File Explorer */}
                 <BuilderSidebar
                     selectedFile={selectedAsset ? (selectedAsset as any).path : null}
@@ -509,16 +533,16 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
                     onUploadStateChange={setUploadState}
                 />
 
-                {/* Middle - Viewer / Image Edit Form / Upload Overlay */}
-                <div className="flex-1 bg-muted/20 relative min-w-0 border-x-2 border-border">
-                    {renderBuilderViewerArea()}
+                {/* Middle - Viewer / Upload Overlay */}
+                <div className="flex-1 bg-muted/20 relative min-w-0 border-x border-white/10">
+                    <UnifiedViewer />
 
                     {/* Upload to Project Overlay — covers the viewer area */}
                     {uploadState && uploadState.isUploading && (
                         <div className="absolute inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col items-center justify-center">
                             <div className="max-w-md w-full p-8">
                                 <div className="flex flex-col items-center mb-8">
-                                    <div className="h-14 w-14 rounded-full overflow-hidden border-2 border-foreground bg-background animate-spin-think mb-4">
+                                    <div className="h-14 w-14 rounded-full overflow-hidden border border-white/20 bg-background animate-spin-think mb-4">
                                         <img src={iconJpg} alt="Uploading..." className="h-full w-full object-cover" />
                                     </div>
                                     <h3 className="font-mono text-lg font-bold text-foreground">
@@ -529,7 +553,7 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
                                     </p>
                                 </div>
 
-                                <div className="space-y-3 border-2 border-border p-4 bg-background">
+                                <div className="space-y-3 border border-white/10 p-4 bg-background">
                                     {uploadState.files.map((file, idx) => (
                                         <div key={idx} className="flex items-center gap-3 font-mono text-xs">
                                             <div className="w-5 h-5 flex items-center justify-center shrink-0">
@@ -576,7 +600,31 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
                 </div>
 
                 {/* Right Sidebar - Inspector */}
-                <BuilderInspector />
+                <div 
+                    className={cn(
+                        "relative flex shrink-0 transition-all duration-300 ease-in-out border-l border-white/10",
+                        isInspectorCollapsed ? "w-0 border-none" : "w-auto"
+                    )}
+                    style={{ 
+                        width: isInspectorCollapsed ? 0 : `${inspectorWidth}px`,
+                        opacity: isInspectorCollapsed ? 0 : 1,
+                        pointerEvents: isInspectorCollapsed ? 'none' : 'auto'
+                    }}
+                >
+                    {/* Resize Handle */}
+                    {!isInspectorCollapsed && (
+                        <div 
+                            className={cn(
+                                "absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize z-50 hover:bg-white/20 transition-colors",
+                                isResizingInspector && "bg-white/30"
+                            )}
+                            onMouseDown={startResizingInspector}
+                        />
+                    )}
+                    <div className="flex-1 overflow-hidden h-full">
+                        <BuilderInspector />
+                    </div>
+                </div>
             </div>
 
             {/* Welcome Modal */}
@@ -584,3 +632,4 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
         </div>
     )
 }
+

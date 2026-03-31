@@ -27,6 +27,7 @@ import {
   User as UserIcon,
   X
 } from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion"
 import { useCallback, useEffect, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { VideoPlayer } from "../components/chat/VideoPlayer"
@@ -77,7 +78,7 @@ export function Dashboard() {
   const [assetsTab, setAssetsTab] = useState<"images" | "models" | "videos" | "audio">("images")
   const [isLoadingAssets, setIsLoadingAssets] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const [itemToDelete, setItemToDelete] = useState<{ type: "image" | "model" | "video" | "audio"; id: string; dbId: string } | null>(null)
+  const [itemToDelete, setItemToDelete] = useState<{ type: "image" | "model" | "video" | "audio" | "project"; id: string; dbId?: string } | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [passwordForm, setPasswordForm] = useState({ current: "", new: "", confirm: "" })
   const [passwordError, setPasswordError] = useState<string | null>(null)
@@ -293,15 +294,8 @@ export function Dashboard() {
 
   const handleDeleteProject = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation()
-    if (confirm("Are you sure you want to delete this project? This action cannot be undone.")) {
-      try {
-        await deleteProject(projectId)
-        setProjects(projects.filter(p => p.id !== projectId))
-      } catch (error) {
-        console.error("Error deleting project:", error)
-        alert("Failed to delete project. Please try again.")
-      }
-    }
+    setItemToDelete({ type: "project", id: projectId })
+    setShowDeleteConfirm(true)
   }
 
 
@@ -425,28 +419,32 @@ export function Dashboard() {
     try {
       switch (itemToDelete.type) {
         case "image":
-          await deleteImage(itemToDelete.id, itemToDelete.dbId)
+          await deleteImage(itemToDelete.id, itemToDelete.dbId!)
           const newImages = userImages.filter(img => img.id !== itemToDelete.id)
           setUserImages(newImages)
           if (globalAssetsCache) globalAssetsCache.images = newImages
           break
         case "model":
-          await deleteModel(itemToDelete.id, itemToDelete.dbId)
+          await deleteModel(itemToDelete.id, itemToDelete.dbId!)
           const newModels = userModels.filter(model => model.id !== itemToDelete.id)
           setUserModels(newModels)
           if (globalAssetsCache) globalAssetsCache.models = newModels
           break
         case "video":
-          await deleteVideo(itemToDelete.id, itemToDelete.dbId)
+          await deleteVideo(itemToDelete.id, itemToDelete.dbId!)
           const newVideos = userVideos.filter(video => video.id !== itemToDelete.id)
           setUserVideos(newVideos)
           if (globalAssetsCache) globalAssetsCache.videos = newVideos
           break
         case "audio":
-          await deleteAudio(itemToDelete.id, itemToDelete.dbId)
+          await deleteAudio(itemToDelete.id, itemToDelete.dbId!)
           const newAudio = userAudio.filter(audio => audio.id !== itemToDelete.id)
           setUserAudio(newAudio)
           if (globalAssetsCache) globalAssetsCache.audio = newAudio
+          break
+        case "project":
+          await deleteProject(itemToDelete.id)
+          setProjects(projects.filter(p => p.id !== itemToDelete.id))
           break
       }
       setShowDeleteConfirm(false)
@@ -579,36 +577,34 @@ export function Dashboard() {
   }
 
   return (
-    <div className="flex flex-col h-full w-full bg-background overflow-hidden font-mono relative">
+    <div className="flex flex-col h-full w-full bg-background overflow-hidden relative">
+      {/* Dynamic Background Elements */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-30">
+        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-foreground/5 blur-[100px]" />
+        <div className="absolute bottom-[20%] right-[-5%] w-[30%] h-[30%] rounded-full bg-foreground/5 blur-[100px]" />
+      </div>
+
       {/* Main Content Area with Sidebar */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative z-10">
         {/* Left Sidebar */}
         <div
           className={cn(
-            "bg-background border-r border-border transition-all duration-300 flex flex-col z-10",
-            !isSidebarOpen ? "w-0 overflow-hidden border-none mx-0" : "w-64"
+            "bg-background/40 backdrop-blur-2xl border-r border-foreground/10 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] flex flex-col z-20",
+            !isSidebarOpen ? "w-0 overflow-hidden border-none mx-0" : "w-72"
           )}
         >
-          {/* Sidebar Toggle Button Area (Optional if using only main header button) */}
-          <div className="p-4 border-b border-border flex items-center justify-between">
-            <span className="text-sm font-bold text-foreground">Dashboard</span>
-            <button
-              onClick={() => setIsSidebarOpen(false)}
-              className="p-1 hover:bg-muted rounded border border-border"
-            >
-              <ChevronLeft className="h-4 w-4 text-foreground transition-transform" />
-            </button>
-          </div>
 
-          <div className="flex-1 overflow-y-auto p-4 bg-background">
-            <div className="space-y-1 mb-6">
+
+          <div className="flex-1 overflow-y-auto px-4 pt-6 pb-2 bg-transparent custom-scrollbar">
+            <div className="space-y-2 mb-8">
+              <p className="px-4 text-[10px] font-bold text-muted-foreground/50 uppercase tracking-[0.2em] mb-4">Main Menu</p>
               <NavItem
                 icon={Eye}
                 label="Explore"
                 active={activeTab === "explore"}
                 onClick={() => setActiveTab("explore")}
                 collapsed={!isSidebarOpen}
-                number="1"
+
               />
               <NavItem
                 icon={UserIcon}
@@ -616,15 +612,7 @@ export function Dashboard() {
                 active={activeTab === "profile"}
                 onClick={() => setActiveTab("profile")}
                 collapsed={!isSidebarOpen}
-                number="2"
-              />
-              <NavItem
-                icon={TrendingUp}
-                label="Usage"
-                active={activeTab === "usage"}
-                onClick={() => setActiveTab("usage")}
-                collapsed={!isSidebarOpen}
-                number="3"
+
               />
               <NavItem
                 icon={Home}
@@ -632,37 +620,47 @@ export function Dashboard() {
                 active={activeTab === "projects"}
                 onClick={() => setActiveTab("projects")}
                 collapsed={!isSidebarOpen}
-                number="4"
+
+              />
+            </div>
+
+            <div className="space-y-2 mb-8">
+              <p className="px-4 text-[10px] font-bold text-muted-foreground/50 uppercase tracking-[0.2em] mb-4">Account & Data</p>
+              <NavItem
+                icon={TrendingUp}
+                label="Analytics & Usage"
+                active={activeTab === "usage"}
+                onClick={() => setActiveTab("usage")}
+                collapsed={!isSidebarOpen}
+
               />
               <NavItem
                 icon={Settings}
-                label="Features"
+                label="System Features"
                 active={activeTab === "features"}
                 onClick={() => setActiveTab("features")}
                 collapsed={!isSidebarOpen}
-                number="5"
+
               />
               <NavItem
-                icon={HelpCircle}
-                label="Accounts"
+                icon={Key}
+                label="Security"
                 active={activeTab === "accounts"}
                 onClick={() => setActiveTab("accounts")}
                 collapsed={!isSidebarOpen}
-                number="6"
+
               />
             </div>
           </div>
 
           {/* Bottom Section */}
-          <div className="p-4 border-t border-border space-y-2 mt-auto">
+          <div className="p-6 border-t border-foreground/5 space-y-4">
             <button
               onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-3 py-2 text-foreground hover:bg-muted rounded border border-border transition-colors justify-between"
+              className="w-full flex items-center gap-3 px-4 py-3 text-muted-foreground hover:text-red-400 hover:bg-red-400/5 rounded-lg transition-all border border-transparent hover:border-red-400/20 group"
             >
-              <div className="flex items-center gap-3">
-                <LogOut className="h-4 w-4" />
-                <span className={cn("text-sm", !isSidebarOpen && "hidden")}>Logout</span>
-              </div>
+              <LogOut className="h-5 w-5 transition-transform group-hover:translate-x-1" />
+              <span className={cn("text-sm font-medium", !isSidebarOpen && "hidden")}>Sign Out</span>
             </button>
           </div>
         </div>
@@ -673,66 +671,104 @@ export function Dashboard() {
           {/* Tab Content */}
           <div className="flex-1 overflow-y-auto">
             {activeTab === "explore" && (
-              <div className="p-12">
-                <h1 className="text-4xl font-bold text-foreground mb-4">
-                  Your Ultimate Personal Online Business Hub.
-                </h1>
-                <p className="text-base text-foreground/70 mb-6 max-w-2xl">
-                  The Original Dashboard-Styled Personal Website Template for Framer just got even better – with Dashfolio+
-                </p>
-                <div className="flex gap-4">
-                  <button className="px-6 py-2 bg-foreground text-background border border-foreground hover:bg-muted-foreground transition-colors text-sm">
-                    $ about
-                  </button>
-                  <button className="px-6 py-2 bg-background text-foreground border border-foreground hover:bg-muted transition-colors text-sm flex items-center gap-2">
-                    <Mail className="h-4 w-4" />
-                    $ e_mail
-                  </button>
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-6 max-w-6xl mx-auto"
+              >
+                <div className="relative mb-8 group">
+                  <div className="absolute -top-6 -left-6 w-5 h-5 bg-foreground/5 text-foreground rounded-full blur-2xl group-hover:scale-150 transition-transform duration-1000" />
+                  <h1 className="text-sm font-bold text-foreground mb-6 leading-tight tracking-tighter">
+                    Your Creative Workspace, <br />
+                    All in One Hub.
+                  </h1>
+                  <p className="text-sm text-muted-foreground mb-6 max-w-2xl leading-relaxed">
+                    Welcome back to Koye. Your dedicated space for project management, asset orchestration, and AI-powered workflow scaling.
+                  </p>
+                  <div className="flex gap-4">
+                    <button className="px-4 py-2 text-sm bg-foreground text-background hover:bg-foreground/90 font-bold rounded-lg hover:scale-105 active:scale-95 transition-all shadow-sm text-foreground">
+                      Explore Workspace
+                    </button>
+                    <button className="px-4 py-2 text-sm bg-foreground/5 text-foreground border border-foreground/10 hover:bg-foreground/10 font-bold rounded-lg transition-all flex items-center gap-2">
+                      <Mail className="h-5 w-5" />
+                      Contact Support
+                    </button>
+                  </div>
                 </div>
-              </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="p-5 rounded-xl bg-foreground/5 border border-foreground/10 hover:border-foreground/20 transition-all">
+                    <h3 className="text-sm font-bold mb-2">Total Assets</h3>
+                    <p className="text-sm font-bold text-foreground">{userImages.length + userModels.length + userVideos.length}</p>
+                  </div>
+                  <div className="p-5 rounded-xl bg-foreground/5 border border-foreground/10 hover:border-foreground/20 transition-all">
+                    <h3 className="text-sm font-bold mb-2">Projects</h3>
+                    <p className="text-sm font-bold text-foreground">{projects.length}</p>
+                  </div>
+                  <div className="p-5 rounded-xl bg-foreground/5 border border-foreground/10 hover:border-foreground/20 transition-all">
+                    <h3 className="text-sm font-bold mb-2">Plan</h3>
+                    <p className="text-sm font-bold text-foreground uppercase">{subscription?.planDisplayName || "Free"}</p>
+                  </div>
+                </div>
+              </motion.div>
             )}
 
             {activeTab === "profile" && (
-              <div className="p-12 space-y-8">
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="p-6 space-y-12 max-w-7xl mx-auto"
+              >
                 {/* User Profile Section */}
-                <div className="border-2 border-border p-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-2xl font-bold text-foreground">$ user_profile</h2>
+                <div className="bg-foreground/5 border border-foreground/10 p-5 rounded-lg relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 p-5">
+                    <div className="w-5 h-5 rounded-full bg-foreground/5 text-foreground blur-2xl" />
+                  </div>
+
+                  <div className="flex items-center justify-between mb-6 relative z-10">
+                    <div className="flex items-center gap-3">
+                      <div className="w-5 h-5 rounded-xl bg-foreground/10 flex items-center justify-center text-sm font-bold text-foreground shadow-sm text-foreground">
+                        {user.email?.[0].toUpperCase()}
+                      </div>
+                      <div>
+                        <h2 className="text-sm font-bold text-foreground tracking-tight">Account Overview</h2>
+                        <p className="text-muted-foreground">Manage your credentials and personal workspace files.</p>
+                      </div>
+                    </div>
                     <button
                       onClick={handleLogout}
-                      className="flex items-center gap-2 px-3 py-1 bg-background text-foreground border border-border hover:bg-muted transition-colors text-xs font-bold"
+                      className="px-3 py-1.5 text-xs bg-foreground/5 text-foreground hover:bg-red-400/10 hover:text-red-400 border border-foreground/10 hover:border-red-400/20 rounded-lg transition-all font-bold text-xs tracking-widest"
                     >
-                      <LogOut className="h-3 w-3" />
-                      LOGOUT
+                      LOGOUT SESSION
                     </button>
                   </div>
 
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-xs text-muted-foreground">Email</label>
-                      <div className="text-sm font-mono text-foreground mt-1">{user.email}</div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5 relative z-10">
+                    <div className="bg-foreground/5 p-6 rounded-xl border border-foreground/5">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 block">Primary Identity</label>
+                      <div className="text-sm font-bold text-foreground truncate">{user.email}</div>
                     </div>
 
-                    <div>
-                      <label className="text-xs text-muted-foreground">Plan</label>
-                      <div className="flex items-center gap-2 mt-1">
-                        <Crown className="h-4 w-4 text-foreground" />
-                        <span className="text-sm font-mono text-foreground">
-                          {subscription?.planDisplayName || "FREE"}
+                    <div className="bg-foreground/5 p-6 rounded-xl border border-foreground/5">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 block">Current License</label>
+                      <div className="flex items-center gap-3">
+                        <Crown className="h-5 w-5 text-foreground" />
+                        <span className="text-sm font-bold text-foreground">
+                          {subscription?.planDisplayName || "Standard Free"}
                         </span>
                       </div>
                     </div>
 
-                    <div>
-                      <label className="text-xs text-muted-foreground">Expires On</label>
-                      <div className="flex items-center gap-2 mt-1">
-                        <Calendar className="h-4 w-4 text-foreground" />
-                        <span className="text-sm font-mono text-foreground">
+                    <div className="bg-foreground/5 p-6 rounded-xl border border-foreground/5">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2 block">Plan Expiry</label>
+                      <div className="flex items-center gap-3">
+                        <Calendar className="h-5 w-5 text-foreground/60" />
+                        <span className="text-sm font-bold text-foreground">
                           {subscription?.expiresAt
                             ? formatExpirationDate(subscription.expiresAt)
                             : subscription?.planName === "FREE"
-                              ? "Unlimited"
-                              : "No expiration"}
+                              ? "Lifetime Access"
+                              : "N/A"}
                         </span>
                       </div>
                     </div>
@@ -740,88 +776,68 @@ export function Dashboard() {
 
                   {/* Pro Trial Claim Button */}
                   {(!subscription || subscription.planName === "FREE") && (
-                    <div className="pt-4 border-t border-border">
-                      <Button
+                    <div className="mt-6 pt-8 border-t border-foreground/5 relative z-10">
+                      <button
                         onClick={handleClaimProTrial}
-                        className="w-full bg-foreground text-background hover:bg-muted-foreground border border-foreground font-mono text-sm"
+                        className="w-full py-5 bg-foreground/10 text-foreground border border-foreground/10 hover:bg-foreground/20 text-foreground hover:scale-[1.01] transition-all rounded-xl font-bold text-sm shadow-sm text-foreground flex items-center justify-center gap-3"
                       >
-                        <Crown className="h-4 w-4 mr-2" />
-                        $ claim_pro_trial_for_free
-                      </Button>
+                        <Crown className="h-4 w-4" />
+                        Unlock 7-Day PRO Trial
+                      </button>
                     </div>
                   )}
                 </div>
 
                 {/* User Assets Section */}
-                <div className="border-2 border-border">
-                  <div className="border-b border-border p-4 flex gap-2 flex-wrap">
-                    <button
-                      onClick={() => setAssetsTab("images")}
-                      className={cn(
-                        "px-4 py-2 text-sm font-mono border border-border transition-colors",
-                        assetsTab === "images"
-                          ? "bg-foreground text-background"
-                          : "bg-background text-foreground hover:bg-muted"
-                      )}
-                    >
-                      $ images ({userImages.length})
-                    </button>
-                    <button
-                      onClick={() => setAssetsTab("models")}
-                      className={cn(
-                        "px-4 py-2 text-sm font-mono border border-border transition-colors",
-                        assetsTab === "models"
-                          ? "bg-foreground text-background"
-                          : "bg-background text-foreground hover:bg-muted"
-                      )}
-                    >
-                      $ 3d_models ({userModels.length})
-                    </button>
-                    <button
-                      onClick={() => setAssetsTab("videos")}
-                      className={cn(
-                        "px-4 py-2 text-sm font-mono border border-border transition-colors",
-                        assetsTab === "videos"
-                          ? "bg-foreground text-background"
-                          : "bg-background text-foreground hover:bg-muted"
-                      )}
-                    >
-                      $ videos ({userVideos.length})
-                    </button>
-                    <button
-                      onClick={() => setAssetsTab("audio")}
-                      className={cn(
-                        "px-4 py-2 text-sm font-mono border border-border transition-colors",
-                        assetsTab === "audio"
-                          ? "bg-foreground text-background"
-                          : "bg-background text-foreground hover:bg-muted"
-                      )}
-                    >
-                      $ audio ({userAudio.length})
-                    </button>
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-bold tracking-tight">Your Media Library</h2>
+                    <div className="flex gap-2 bg-foreground/5 p-1.5 rounded-lg border border-foreground/5">
+                      {[
+                        { id: "images", label: "Images", count: userImages.length },
+                        { id: "models", label: "3D Models", count: userModels.length },
+                        { id: "videos", label: "Videos", count: userVideos.length },
+                        { id: "audio", label: "Audio", count: userAudio.length }
+                      ].map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => setAssetsTab(t.id as any)}
+                          className={cn(
+                            "px-5 py-2 text-xs font-bold rounded-xl transition-all duration-300",
+                            assetsTab === t.id
+                              ? "bg-foreground text-background hover:bg-foreground/90 shadow-sm"
+                              : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+                          )}
+                        >
+                          {t.label}
+                          <span className="ml-2 opacity-50 px-1.5 py-0.5 rounded-md bg-black/20">{t.count}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Scrollable Assets Container */}
-                  <div className="p-6 h-[600px] overflow-y-auto border-t border-border">
+                  <div className="bg-foreground/5 border border-foreground/10 rounded-xl p-6 min-h-[600px] backdrop-blur-sm">
                     {isLoadingAssets ? (
-                      <div className="text-center py-12 text-muted-foreground font-mono">
-                        $ loading_assets...
+                      <div className="flex flex-col items-center justify-center py-10 gap-4">
+                        <div className="w-4 h-4 border-4 border-foreground/20 border-t-white rounded-full animate-spin" />
+                        <span className="text-muted-foreground font-medium tracking-tight">Syncing assets...</span>
                       </div>
                     ) : assetsTab === "images" ? (
                       userImages.length === 0 ? (
-                        <div className="text-center py-12 text-muted-foreground font-mono">
-                          $ no_images_generated_yet
+                        <div className="flex flex-col items-center justify-center py-10 gap-4 opacity-40">
+                          <Eye className="w-5 h-5" />
+                          <p className="font-bold">No visual assets detected yet.</p>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                           {userImages.map((image, index) => {
-                            // Get image title: use prompt if available, otherwise "Image 1", "Image 2", etc.
-                            const imageTitle = image.prompt?.trim() || "Image " + (index + 1)
-
+                            const imageTitle = image.prompt?.trim() || "Generated Image " + (index + 1)
                             return (
-                              <div
+                              <motion.div
                                 key={image.id}
-                                className="border-2 border-border relative group cursor-pointer"
+                                whileHover={{ y: -5 }}
+                                className="group relative rounded-xl overflow-hidden bg-foreground/5 border border-foreground/10 aspect-square cursor-pointer"
                                 onClick={() => {
                                   setSelectedImage(image.url)
                                   setImageGroup([image.url])
@@ -831,62 +847,50 @@ export function Dashboard() {
                                 <img
                                   src={image.url}
                                   alt={imageTitle}
-                                  loading="lazy"
-                                  decoding="async"
-                                  className="w-full h-48 object-cover bg-muted"
+                                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                                 />
-                                <div className="absolute inset-0 bg-transparent group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-                                  <Maximize2 className="h-6 w-6 text-foreground" />
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex flex-col justify-end p-4">
+                                  <div className="flex gap-2 justify-end mb-2">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setAssetToImport({ type: "image", url: image.url, name: imageTitle })
+                                        setShowImportDialog(true)
+                                      }}
+                                      className="p-2 bg-foreground/10 backdrop-blur-md rounded-xl hover:bg-foreground text-background hover:bg-foreground/90 transition-colors"
+                                    >
+                                      <FolderInput className="h-4 w-4 text-foreground" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        confirmDelete("image", image.id, image.dbId)
+                                      }}
+                                      className="p-2 bg-foreground/10 backdrop-blur-md rounded-xl hover:bg-red-500 transition-colors"
+                                    >
+                                      <Trash2 className="h-4 w-4 text-foreground" />
+                                    </button>
+                                  </div>
+                                  <p className="text-[10px] font-bold text-foreground/90 truncate uppercase tracking-widest">{imageTitle}</p>
                                 </div>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setAssetToImport({ type: "image", url: image.url, name: imageTitle })
-                                    setShowImportDialog(true)
-                                  }}
-                                  className="absolute top-2 right-10 p-1.5 bg-foreground hover:bg-muted-foreground text-background rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                  title="Import to Project"
-                                >
-                                  <FolderInput className="h-4 w-4" />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    confirmDelete("image", image.id, image.dbId)
-                                  }}
-                                  className="absolute top-2 right-2 p-1.5 bg-red-600 hover:bg-red-700 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                  title="Delete image"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                                <div className="p-2 bg-background border-t border-border">
-                                  <p className="text-xs text-muted-foreground truncate">{imageTitle}</p>
-                                  <p className="text-xs text-muted-foreground/50 truncate">
-                                    {new Date(image.createdAt).toLocaleString("en-US", {
-                                      year: "numeric",
-                                      month: "short",
-                                      day: "numeric",
-                                      hour: "2-digit",
-                                      minute: "2-digit"
-                                    })}
-                                  </p>
-                                </div>
-                              </div>
+                              </motion.div>
                             )
                           })}
                         </div>
                       )
                     ) : assetsTab === "models" ? (
                       userModels.length === 0 ? (
-                        <div className="text-center py-12 text-muted-foreground font-mono">
-                          $ no_3d_models_generated_yet
+                        <div className="flex flex-col items-center justify-center py-10 gap-4 opacity-40">
+                          <Box className="w-5 h-5" />
+                          <p className="font-bold">No 3D workspace identified.</p>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                           {userModels.map((model) => (
-                            <div
+                            <motion.div
                               key={model.id}
-                              className="border-2 border-border p-4 cursor-pointer hover:bg-muted transition-colors relative group"
+                              whileHover={{ y: -5 }}
+                              className="group relative rounded-xl overflow-hidden bg-foreground/5 border border-foreground/10 aspect-square cursor-pointer"
                               onClick={() => setSelectedModel({
                                 id: model.id,
                                 assetId: model.assetId || "",
@@ -896,249 +900,233 @@ export function Dashboard() {
                                 createdAt: model.createdAt,
                               })}
                             >
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setAssetToImport({ type: "model", url: model.url, name: model.format })
-                                  setShowImportDialog(true)
-                                }}
-                                className="absolute top-2 right-10 p-1.5 bg-black hover:bg-gray-800 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Import to Project"
-                              >
-                                <FolderInput className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  confirmDelete("model", model.id, model.dbId)
-                                }}
-                                className="absolute top-2 right-2 p-1.5 bg-red-600 hover:bg-red-700 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Delete model"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                              <div className="flex items-center gap-3 mb-2">
-                                <Box className="h-6 w-6 text-foreground" />
-                                <div className="flex-1">
-                                  <div className="text-sm font-bold text-foreground font-mono">
-                                    {model.format.toUpperCase()}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {new Date(model.createdAt).toLocaleString("en-US", {
-                                      year: "numeric",
-                                      month: "short",
-                                      day: "numeric",
-                                      hour: "2-digit",
-                                      minute: "2-digit"
-                                    })}
-                                  </div>
-                                </div>
-                                <Download className="h-4 w-4 text-muted-foreground" />
+                              <div className="w-full h-full flex flex-col items-center justify-center bg-transparent transition-transform duration-700 group-hover:scale-110">
+                                <Box className="w-8 h-8 text-foreground/30 mb-3" />
+                                <h4 className="text-xs font-bold text-foreground tracking-tight uppercase">
+                                  {model.format} Mesh
+                                </h4>
                               </div>
-                            </div>
+
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-300 flex flex-col justify-end p-4">
+                                <div className="flex gap-2 justify-end mb-2">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setAssetToImport({ type: "model", url: model.url, name: model.format })
+                                      setShowImportDialog(true)
+                                    }}
+                                    className="p-2 bg-white/20 backdrop-blur-md rounded-lg hover:bg-white hover:text-black text-white transition-colors"
+                                  >
+                                    <FolderInput className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      confirmDelete("model", model.id, model.dbId)
+                                    }}
+                                    className="p-2 bg-white/20 backdrop-blur-md rounded-lg hover:bg-red-500 hover:text-white transition-colors text-white"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                                <p className="text-[10px] font-bold text-white/90 truncate uppercase tracking-widest">{model.status}</p>
+                              </div>
+                            </motion.div>
                           ))}
                         </div>
                       )
                     ) : assetsTab === "videos" ? (
                       userVideos.length === 0 ? (
-                        <div className="text-center py-12 text-muted-foreground font-mono">
-                          $ no_videos_generated_yet
+                        <div className="flex flex-col items-center justify-center py-10 gap-4 opacity-40">
+                          <Eye className="w-5 h-5" />
+                          <p className="font-bold">Empty cinematic sequence.</p>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                           {userVideos.map((video) => (
-                            <div
+                            <motion.div
                               key={video.id}
-                              className="border-2 border-border relative group cursor-pointer"
+                              whileHover={{ y: -5 }}
+                              className="group relative rounded-xl overflow-hidden bg-black border border-foreground/10 aspect-video cursor-pointer"
                               onClick={() => setSelectedVideo(video.url)}
                             >
                               <video
                                 src={video.url}
-                                className="w-full h-48 object-contain bg-black"
+                                className="w-full h-full object-contain"
                                 muted
                                 loop
                                 playsInline
-                                preload="metadata"
                               />
-                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-                                <Maximize2 className="h-6 w-6 text-white" />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <Maximize2 className="w-5 h-5 text-foreground/50" />
                               </div>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setAssetToImport({ type: "video", url: video.url, name: video.prompt || "Video" })
-                                  setShowImportDialog(true)
-                                }}
-                                className="absolute top-2 right-10 p-1.5 bg-black hover:bg-gray-800 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Import to Project"
-                              >
-                                <FolderInput className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  confirmDelete("video", video.id, video.dbId)
-                                }}
-                                className="absolute top-2 right-2 p-1.5 bg-red-600 hover:bg-red-700 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Delete video"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                              <div className="p-2 bg-background border-t border-border">
-                                <p className="text-xs text-foreground/70 truncate">
-                                  {video.prompt || "Video"}
-                                </p>
-                                <p className="text-xs text-muted-foreground truncate">
-                                  {new Date(video.createdAt).toLocaleString("en-US", {
-                                    year: "numeric",
-                                    month: "short",
-                                    day: "numeric",
-                                    hour: "2-digit",
-                                    minute: "2-digit"
-                                  })}
-                                </p>
+                              <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setAssetToImport({ type: "video", url: video.url, name: video.prompt || "Video" })
+                                    setShowImportDialog(true)
+                                  }}
+                                  className="p-2 bg-foreground/10 backdrop-blur-md rounded-xl hover:bg-foreground text-background hover:bg-foreground/90 transition-colors text-foreground"
+                                >
+                                  <FolderInput className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    confirmDelete("video", video.id, video.dbId)
+                                  }}
+                                  className="p-2 bg-foreground/10 backdrop-blur-md rounded-xl hover:bg-red-500 transition-colors text-foreground"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
                               </div>
-                            </div>
+                            </motion.div>
                           ))}
                         </div>
                       )
                     ) : (
                       userAudio.length === 0 ? (
-                        <div className="text-center py-12 text-muted-foreground font-mono">
-                          $ no_audio_generated_yet
+                        <div className="flex flex-col items-center justify-center py-10 gap-4 opacity-40">
+                          <MessageSquare className="w-5 h-5" />
+                          <p className="font-bold">Acoustic signature not found.</p>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 gap-4">
                           {userAudio.map((audio) => (
-                            <div
+                            <motion.div
                               key={audio.id}
-                              className="border-2 border-border p-4 cursor-pointer hover:bg-muted transition-colors relative group"
+                              className="bg-foreground/5 border border-foreground/10 p-6 rounded-xl relative group"
                             >
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setAssetToImport({ type: "audio", url: audio.url, name: audio.prompt || "Audio" })
-                                  setShowImportDialog(true)
-                                }}
-                                className="absolute top-2 right-10 p-1.5 bg-black hover:bg-gray-800 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Import to Project"
-                              >
-                                <FolderInput className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  confirmDelete("audio", audio.id, audio.dbId)
-                                }}
-                                className="absolute top-2 right-2 p-1.5 bg-red-600 hover:bg-red-700 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Delete audio"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                              <div className="flex items-center gap-3 mb-2">
-                                <MessageSquare className="h-6 w-6 text-foreground shrink-0" />
+                              <div className="flex items-center gap-3">
+                                <div className="w-4 h-4 rounded-lg bg-foreground/5 flex items-center justify-center shrink-0">
+                                  <MessageSquare className="h-5 w-5 text-foreground" />
+                                </div>
                                 <div className="flex-1 min-w-0">
-                                  <div className="text-sm font-bold text-foreground font-mono truncate">
-                                    {audio.prompt || "Audio File"}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground truncate">
-                                    {new Date(audio.createdAt).toLocaleString("en-US", {
-                                      year: "numeric",
-                                      month: "short",
-                                      day: "numeric",
-                                      hour: "2-digit",
-                                      minute: "2-digit"
-                                    })}
+                                  <h4 className="text-sm font-bold text-foreground truncate tracking-tight uppercase">
+                                    {audio.prompt || "Sonic Capture"}
+                                  </h4>
+                                  <div className="flex items-center gap-4 mt-1">
+                                    <p className="text-xs text-muted-foreground/60">{new Date(audio.createdAt).toLocaleDateString()}</p>
+                                    <audio src={audio.url} controls className="h-8 max-w-[200px] opacity-60 hover:opacity-100 transition-opacity" />
                                   </div>
                                 </div>
-                                <Download className="h-4 w-4 text-muted-foreground shrink-0" />
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setAssetToImport({ type: "audio", url: audio.url, name: audio.prompt || "Audio" })
+                                      setShowImportDialog(true)
+                                    }}
+                                    className="p-3 bg-foreground/5 rounded-lg hover:bg-foreground/5 text-foreground hover:text-foreground transition-all"
+                                  >
+                                    <FolderInput className="h-5 w-5" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      confirmDelete("audio", audio.id, audio.dbId)
+                                    }}
+                                    className="p-3 bg-red-400/5 text-red-400 rounded-lg hover:bg-red-400 hover:text-foreground transition-all"
+                                  >
+                                    <Trash2 className="h-5 w-5" />
+                                  </button>
+                                </div>
                               </div>
-                              <audio
-                                src={audio.url}
-                                controls
-                                className="w-full mt-2"
-                              />
-                            </div>
+                            </motion.div>
                           ))}
                         </div>
                       )
                     )}
                   </div>
                 </div>
-              </div>
+              </motion.div>
             )}
 
             {activeTab === "usage" && (
-              <div className="p-12 space-y-8">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="p-6 space-y-10 max-w-6xl mx-auto"
+              >
                 {/* Credit Balance Card */}
-                <div className="border-2 border-border p-6 bg-gradient-to-r from-muted to-transparent">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-2xl font-bold text-foreground">$ credits</h2>
-                    <div className="flex items-center gap-2">
-                      <Crown className="h-5 w-5 text-foreground" />
-                      <span className="text-sm font-bold text-foreground font-mono">
-                        {subscription?.planDisplayName || "FREE"}
+                <div className="bg-foreground/5 border border-foreground/10 p-6 rounded-lg relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-foreground/5 text-foreground blur-[100px] -mr-32 -mt-32" />
+
+                  <div className="flex items-center justify-between mb-6 relative z-10">
+                    <div>
+                      <h2 className="text-sm font-bold tracking-tight mb-2 text-foreground">Compute Credits</h2>
+                      <p className="text-muted-foreground">Your balance for high-performance generation tasks.</p>
+                    </div>
+                    <div className="flex items-center gap-3 px-3 py-1.5 text-xs bg-foreground/5 text-foreground rounded-lg border border-foreground/10">
+                      <Crown className="h-4 w-4 text-foreground" />
+                      <span className="text-sm font-bold text-foreground">
+                        {subscription?.planDisplayName || "COMMUNITY"}
                       </span>
                     </div>
                   </div>
 
-                  {/* Credit Balance Display */}
-                  <div className="mb-6">
-                    <div className="flex items-end justify-between mb-2">
+                  <div className="mb-6 relative z-10">
+                    <div className="flex items-end justify-between mb-4">
                       <div>
-                        <span className="text-4xl font-bold text-foreground">
+                        <span className="text-sm font-bold text-foreground tracking-tighter">
                           {subscription?.creditsBalance?.toLocaleString() || 0}
                         </span>
-                        <span className="text-lg text-muted-foreground ml-2">
-                          / {subscription?.planName === 'CUSTOM' ? '∞' : (
+                        <span className="text-sm text-muted-foreground ml-4 font-medium opacity-60">
+                          Available Credits
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-bold text-foreground">
+                          Capacity: {subscription?.planName === 'CUSTOM' ? 'UNLIMITED' : (
                             subscription?.planName === 'FREE' ? '200' :
                               subscription?.planName === 'PRO' ? '500' :
                                 subscription?.planName === 'PRO_PLUS' ? '3,000' :
                                   subscription?.planName === 'ULTRA' ? '8,000' : '200'
-                          )} credits
-                        </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {subscription?.expiresAt ? `Cycle ends ${new Date(subscription.expiresAt).toLocaleDateString()}` : 'Monthly refresh'}
+                        </div>
                       </div>
-                      <span className="text-xs text-muted-foreground/50 font-mono">
-                        {subscription?.expiresAt ? `Resets ${new Date(subscription.expiresAt).toLocaleDateString()}` : 'Monthly'}
-                      </span>
                     </div>
                     {subscription?.planName !== 'CUSTOM' && (
-                      <div className="w-full bg-muted h-3 border border-border">
-                        <div
-                          className="bg-foreground h-full transition-all"
-                          style={{
+                      <div className="w-full bg-foreground/5 h-4 rounded-full overflow-hidden border border-foreground/5 p-1">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{
                             width: `${Math.min(100, ((subscription?.creditsBalance || 0) / (
                               subscription?.planName === 'FREE' ? 200 :
                                 subscription?.planName === 'PRO' ? 500 :
                                   subscription?.planName === 'PRO_PLUS' ? 3000 :
                                     subscription?.planName === 'ULTRA' ? 8000 : 200
-                            )) * 100)}%`,
+                            )) * 100)}%`
                           }}
+                          className="bg-foreground text-background hover:bg-foreground/90 h-full rounded-full shadow-sm text-foreground"
                         />
                       </div>
                     )}
                   </div>
 
-                  {/* Plan Features Quick View */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                    <div className="border border-border p-3">
-                      <div className="text-xs text-muted-foreground font-mono mb-1">Plan</div>
-                      <div className="text-sm font-bold text-foreground">{subscription?.planDisplayName || 'Free'}</div>
-                    </div>
-                    <div className="border border-border p-3">
-                      <div className="text-xs text-muted-foreground font-mono mb-1">Priority</div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 relative z-10">
+                    <div className="bg-foreground/5 p-6 rounded-xl border border-foreground/5">
+                      <div className="text-[10px] font-bold text-muted-foreground tracking-[0.2em] uppercase mb-1">Queue Priority</div>
                       <div className="text-sm font-bold text-foreground capitalize">
                         {subscription?.limits?.priorityQueue || 'Standard'}
                       </div>
                     </div>
-                    <div className="border border-border p-3">
-                      <div className="text-xs text-muted-foreground font-mono mb-1">Storage</div>
+                    <div className="bg-foreground/5 p-6 rounded-xl border border-foreground/5">
+                      <div className="text-[10px] font-bold text-muted-foreground tracking-[0.2em] uppercase mb-1">Storage Limit</div>
                       <div className="text-sm font-bold text-foreground">
-                        {subscription?.limits?.storageGb === -1 ? 'Unlimited' : `${subscription?.limits?.storageGb || 2}GB`}
+                        {subscription?.limits?.storageGb === -1 ? 'Infinite' : `${subscription?.limits?.storageGb || 2} GB`}
                       </div>
                     </div>
-                    <div className="border border-border p-3">
-                      <div className="text-xs text-muted-foreground font-mono mb-1">License</div>
+                    <div className="bg-foreground/5 p-6 rounded-xl border border-foreground/5">
+                      <div className="text-[10px] font-bold text-muted-foreground tracking-[0.2em] uppercase mb-1">Scale Multiplier</div>
+                      <div className="text-sm font-bold text-foreground">x1.00</div>
+                    </div>
+                    <div className="bg-foreground/5 p-6 rounded-xl border border-foreground/5">
+                      <div className="text-[10px] font-bold text-muted-foreground tracking-[0.2em] uppercase mb-1">Legal License</div>
                       <div className="text-sm font-bold text-foreground">
                         {subscription?.limits?.commercialLicense ? 'Commercial' : 'Personal'}
                       </div>
@@ -1147,571 +1135,309 @@ export function Dashboard() {
                 </div>
 
                 {/* AI Token Usage Section */}
-                <div className="border-2 border-border p-6">
+                <div className="bg-foreground/5 border border-foreground/10 p-6 rounded-lg">
                   <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-xl font-bold text-foreground">$ ai_token_usage</h2>
-                    <span className="text-xs text-muted-foreground font-mono">💬 100 credits/M tokens</span>
+                    <div>
+                      <h2 className="text-sm font-bold tracking-tight text-foreground">Language Model Analytics</h2>
+                      <p className="text-sm text-muted-foreground mt-1">Detailed token distribution across your AI sessions.</p>
+                    </div>
+                    <div className="px-4 py-2 bg-foreground/5 rounded-xl border border-foreground/10 text-[10px] font-bold text-muted-foreground tracking-widest uppercase">
+                      Conversion: 100 CR / 1M TN
+                    </div>
                   </div>
 
                   {isLoadingTokenUsage ? (
-                    <div className="text-center py-8 text-muted-foreground font-mono">
-                      $ loading_token_usage...
+                    <div className="flex flex-col items-center justify-center py-10 gap-4">
+                      <div className="w-5 h-5 border-2 border-foreground/10 border-t-white rounded-full animate-spin" />
                     </div>
                   ) : tokenUsage ? (
-                    <div className="space-y-6">
-                      {/* Token Stats Grid */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        {/* Today's Usage */}
-                        <div className="border border-border p-4">
-                          <div className="text-xs text-muted-foreground font-mono mb-2">TODAY</div>
-                          <div className="space-y-2">
-                            <div className="flex justify-between">
-                              <span className="text-sm text-foreground/70">Input</span>
-                              <span className="font-mono font-bold text-foreground">{formatTokenCount(tokenUsage.todayInputTokens)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-sm text-foreground/70">Output</span>
-                              <span className="font-mono font-bold text-foreground">{formatTokenCount(tokenUsage.todayOutputTokens)}</span>
-                            </div>
-                            <div className="flex justify-between border-t border-border/20 pt-2">
-                              <span className="text-sm font-bold text-foreground">Total</span>
-                              <span className="font-mono font-bold text-foreground">{formatTokenCount(tokenUsage.todayTotalTokens)}</span>
-                            </div>
-                            <div className="text-xs text-muted-foreground/50 font-mono text-right">
-                              ≈ {calculateTokenCredits(tokenUsage.todayTotalTokens)} credits
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Monthly Usage */}
-                        <div className="border border-border p-4 bg-muted/5">
-                          <div className="text-xs text-muted-foreground font-mono mb-2">THIS MONTH</div>
-                          <div className="space-y-2">
-                            <div className="flex justify-between">
-                              <span className="text-sm text-foreground/70">Input</span>
-                              <span className="font-mono font-bold text-foreground">{formatTokenCount(tokenUsage.monthlyInputTokens)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-sm text-foreground/70">Output</span>
-                              <span className="font-mono font-bold text-foreground">{formatTokenCount(tokenUsage.monthlyOutputTokens)}</span>
-                            </div>
-                            <div className="flex justify-between border-t border-border/20 pt-2">
-                              <span className="text-sm font-bold text-foreground">Total</span>
-                              <span className="font-mono font-bold text-foreground">{formatTokenCount(tokenUsage.monthlyTotalTokens)}</span>
-                            </div>
-                            <div className="text-xs text-muted-foreground/50 font-mono text-right">
-                              ≈ {calculateTokenCredits(tokenUsage.monthlyTotalTokens)} credits
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* All-Time Usage */}
-                        <div className="border border-border p-4">
-                          <div className="text-xs text-muted-foreground font-mono mb-2">ALL TIME</div>
-                          <div className="space-y-2">
-                            <div className="flex justify-between">
-                              <span className="text-sm text-foreground/70">Input</span>
-                              <span className="font-mono font-bold text-foreground">{formatTokenCount(tokenUsage.allTimeInputTokens)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-sm text-foreground/70">Output</span>
-                              <span className="font-mono font-bold text-foreground">{formatTokenCount(tokenUsage.allTimeOutputTokens)}</span>
-                            </div>
-                            <div className="flex justify-between border-t border-border/20 pt-2">
-                              <span className="text-sm font-bold text-foreground">Total</span>
-                              <span className="font-mono font-bold text-foreground">{formatTokenCount(tokenUsage.allTimeTotalTokens)}</span>
-                            </div>
-                            <div className="text-xs text-muted-foreground/50 font-mono text-right">
-                              ≈ {calculateTokenCredits(tokenUsage.allTimeTotalTokens)} credits
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Token Usage Bar - Monthly */}
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-xs font-mono">
-                          <span className="text-muted-foreground">Monthly Token Distribution</span>
-                          <span className="text-foreground">
-                            Input: {Math.round((tokenUsage.monthlyInputTokens / Math.max(tokenUsage.monthlyTotalTokens, 1)) * 100)}% |
-                            Output: {Math.round((tokenUsage.monthlyOutputTokens / Math.max(tokenUsage.monthlyTotalTokens, 1)) * 100)}%
-                          </span>
-                        </div>
-                        <div className="w-full h-4 border border-border flex overflow-hidden">
-                          <div
-                            className="bg-foreground h-full transition-all"
-                            style={{ width: `${(tokenUsage.monthlyInputTokens / Math.max(tokenUsage.monthlyTotalTokens, 1)) * 100}%` }}
-                            title="Input Tokens"
-                          />
-                          <div
-                            className="bg-foreground/40 h-full transition-all"
-                            style={{ width: `${(tokenUsage.monthlyOutputTokens / Math.max(tokenUsage.monthlyTotalTokens, 1)) * 100}%` }}
-                            title="Output Tokens"
-                          />
-                        </div>
-                        <div className="flex gap-4 text-xs font-mono">
-                          <span className="flex items-center gap-1">
-                            <span className="w-3 h-3 bg-foreground"></span> Input Tokens
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <span className="w-3 h-3 bg-foreground/40"></span> Output Tokens
-                          </span>
-                        </div>
-                      </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <UsageCard label="Day Cycle" input={tokenUsage.todayInputTokens} output={tokenUsage.todayOutputTokens} total={tokenUsage.todayTotalTokens} accent="primary" />
+                      <UsageCard label="Monthly Cycle" input={tokenUsage.monthlyInputTokens} output={tokenUsage.monthlyOutputTokens} total={tokenUsage.monthlyTotalTokens} accent="blue" />
+                      <UsageCard label="All-Time Cumulative" input={tokenUsage.allTimeInputTokens} output={tokenUsage.allTimeOutputTokens} total={tokenUsage.allTimeTotalTokens} accent="purple" />
                     </div>
                   ) : (
-                    <div className="text-center py-8 text-muted-foreground font-mono">
-                      $ no_token_usage_data_yet
-                      <p className="text-xs mt-2">Start chatting with AI to see your token usage here</p>
+                    <div className="flex flex-col items-center justify-center py-10 opacity-40">
+                      <Eye className="w-5 h-5 mb-4" />
+                      <p className="font-bold uppercase tracking-widest text-xs">No analytics nodes recorded</p>
                     </div>
                   )}
                 </div>
-
-                {/* Credit Costs Section */}
-                <div className="border-2 border-border p-6">
-                  <h2 className="text-xl font-bold text-foreground mb-6">$ credit_costs</h2>
-
-                  <div className="space-y-6">
-                    {/* AI Chat */}
-                    <div className="border border-border p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <MessageSquare className="h-5 w-5 text-foreground" />
-                        <span className="font-bold text-foreground">AI Chat</span>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 text-sm">
-                        <div className="flex justify-between py-1 border-b border-border/30">
-                          <span className="text-foreground/70">Chat Messages</span>
-                          <span className="font-mono font-bold text-foreground">100 credits/M tokens</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Image Generation */}
-                    <div className="border border-border p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Layers className="h-5 w-5 text-foreground" />
-                        <span className="font-bold text-foreground">🎨 Image Generation</span>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 text-sm">
-                        <div className="flex justify-between py-1 border-b border-border/10">
-                          <span className="text-muted-foreground">Standard (koye2dv1)</span>
-                          <span className="font-mono font-bold text-foreground">5 credits</span>
-                        </div>
-                        <div className="flex justify-between py-1 border-b border-border/10">
-                          <span className="text-muted-foreground">HQ (koye2dv1.5)</span>
-                          <span className="font-mono font-bold text-foreground">10 credits</span>
-                        </div>
-                        <div className="flex justify-between py-1">
-                          <span className="text-muted-foreground">Ultra (koye2dv2)</span>
-                          <span className="font-mono font-bold text-foreground">15 credits</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 3D Models */}
-                    <div className="border border-border p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Box className="h-5 w-5 text-foreground" />
-                        <span className="font-bold text-foreground">🧱 3D Models (koye 3d v1)</span>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 text-sm">
-                        <div className="flex justify-between py-1 border-b border-border/10">
-                          <span className="text-muted-foreground">Basic (512)</span>
-                          <span className="font-mono font-bold text-foreground">20 credits (+5 texture)</span>
-                        </div>
-                        <div className="flex justify-between py-1 border-b border-border/10">
-                          <span className="text-muted-foreground">Standard (1024)</span>
-                          <span className="font-mono font-bold text-foreground">50 credits (+10 texture)</span>
-                        </div>
-                        <div className="flex justify-between py-1">
-                          <span className="text-muted-foreground">High-Res (1536)</span>
-                          <span className="font-mono font-bold text-foreground">70 credits (+20 texture)</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Rigging & Animation */}
-                    <div className="border border-border p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-lg">🧍</span>
-                        <span className="font-bold text-foreground">Rigging & Animation</span>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 text-sm">
-                        <div className="flex justify-between py-1 border-b border-border/10">
-                          <span className="text-muted-foreground">Auto-Rig</span>
-                          <span className="font-mono font-bold text-foreground">10 credits</span>
-                        </div>
-                        <div className="flex justify-between py-1">
-                          <span className="text-muted-foreground">Animation (per clip)</span>
-                          <span className="font-mono font-bold text-foreground">30 credits</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Audio & Video */}
-                    <div className="border border-border p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-lg">🎵</span>
-                        <span className="font-bold text-foreground">Audio & Video</span>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 text-sm">
-                        <div className="flex justify-between py-1 border-b border-border/10">
-                          <span className="text-muted-foreground">Audio (per second)</span>
-                          <span className="font-mono font-bold text-foreground">5 credits</span>
-                        </div>
-                        <div className="flex justify-between py-1 border-b border-border/10">
-                          <span className="text-muted-foreground">Video 720p (per second)</span>
-                          <span className="font-mono font-bold text-foreground">10 credits</span>
-                        </div>
-                        <div className="flex justify-between py-1">
-                          <span className="text-muted-foreground">Video 1080p (per second)</span>
-                          <span className="font-mono font-bold text-foreground">25 credits</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Game Generation */}
-                    <div className="border border-border p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-lg">🎮</span>
-                        <span className="font-bold text-foreground">Game Generation (AI Builder)</span>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 text-sm">
-                        <div className="flex justify-between py-1 border-b border-border/10">
-                          <span className="text-muted-foreground">2D Prototype</span>
-                          <span className="font-mono font-bold text-foreground">100 credits</span>
-                        </div>
-                        <div className="flex justify-between py-1 border-b border-border/10">
-                          <span className="text-muted-foreground">3D Prototype</span>
-                          <span className="font-mono font-bold text-foreground">250 credits</span>
-                        </div>
-                        <div className="flex justify-between py-1">
-                          <span className="text-muted-foreground">Full Small Game</span>
-                          <span className="font-mono font-bold text-foreground">500 credits</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Plan Comparison */}
-                <div className="border-2 border-border p-6">
-                  <h3 className="text-xl font-bold text-foreground mb-4">$ plans</h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b-2 border-border">
-                          <th className="text-left py-2 px-3 font-mono text-foreground">Plan</th>
-                          <th className="text-center py-2 px-3 font-mono text-foreground">Credits/Month</th>
-                          <th className="text-center py-2 px-3 font-mono text-foreground">Price</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr className={`border-b border-border/20 ${subscription?.planName === 'FREE' ? 'bg-muted/50' : ''}`}>
-                          <td className="py-2 px-3 font-bold text-foreground">Free</td>
-                          <td className="text-center py-2 px-3 font-mono text-foreground">200</td>
-                          <td className="text-center py-2 px-3 font-mono text-foreground">$0</td>
-                        </tr>
-                        <tr className={`border-b border-border/20 ${subscription?.planName === 'PRO' ? 'bg-muted/50' : ''}`}>
-                          <td className="py-2 px-3 font-bold text-foreground">Pro</td>
-                          <td className="text-center py-2 px-3 font-mono text-foreground">500</td>
-                          <td className="text-center py-2 px-3 font-mono text-foreground">$5.99/mo</td>
-                        </tr>
-                        <tr className={`border-b border-border/20 ${subscription?.planName === 'PRO_PLUS' ? 'bg-muted/50' : ''}`}>
-                          <td className="py-2 px-3 font-bold text-foreground">Pro Plus</td>
-                          <td className="text-center py-2 px-3 font-mono text-foreground">3,000</td>
-                          <td className="text-center py-2 px-3 font-mono text-foreground">$19.99/mo</td>
-                        </tr>
-                        <tr className={`border-b border-border/20 ${subscription?.planName === 'ULTRA' ? 'bg-muted/50' : ''}`}>
-                          <td className="py-2 px-3 font-bold text-foreground">Ultra</td>
-                          <td className="text-center py-2 px-3 font-mono text-foreground">8,000</td>
-                          <td className="text-center py-2 px-3 font-mono text-foreground">$49.99/mo</td>
-                        </tr>
-                        <tr className={`${subscription?.planName === 'CUSTOM' ? 'bg-muted/50' : ''}`}>
-                          <td className="py-2 px-3 font-bold text-foreground">Custom</td>
-                          <td className="text-center py-2 px-3 font-mono text-foreground">Unlimited*</td>
-                          <td className="text-center py-2 px-3 font-mono text-foreground">Contact Us</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                    <p className="text-xs text-muted-foreground mt-2 font-mono">* Fair Use Policy (FUP) applied</p>
-                  </div>
-                </div>
-
-                {/* Upgrade Section */}
-                <div className="border-2 border-border p-6">
-                  <h3 className="text-xl font-bold text-foreground mb-4">$ upgrade</h3>
-                  <p className="text-sm text-foreground/70 mb-4">
-                    Need more credits? Upgrade to {getNextPlanName() || "a higher plan"} for more features and monthly credits.
-                  </p>
-                  <Button
-                    onClick={handleUpgrade}
-                    className="bg-foreground text-background hover:bg-muted-foreground border border-foreground font-mono"
-                  >
-                    <TrendingUp className="h-4 w-4 mr-2" />
-                    $ upgrade_to_{getNextPlanName() || "pro"}
-                  </Button>
-                </div>
-              </div>
+              </motion.div>
             )}
 
-            {
-              activeTab === "features" && (
-                <div className="p-12 space-y-8">
-                  <div className="border-2 border-border p-6">
-                    <h2 className="text-2xl font-bold text-foreground mb-6">$ features</h2>
-
-                    <div className="space-y-6">
-                      <FeatureSection
-                        title="AI Chat Interface"
-                        description="Chat with AI to describe your game assets. The AI will ask clarifying questions and help you design your assets."
-                        steps={[
-                          "1. Start a conversation in the chat interface",
-                          "2. Describe your game asset idea",
-                          "3. Answer AI's clarifying questions",
-                          "4. Review and confirm the generated prompt"
-                        ]}
-                      />
-
-                      <FeatureSection
-                        title="Image Generation"
-                        description="Generate concept art images from text prompts using advanced AI models."
-                        steps={[
-                          "1. Enter a text prompt describing your image",
-                          "2. Select generation method (default or banana)",
-                          "3. Choose single or four-view generation",
-                          "4. Click Generate and wait for results"
-                        ]}
-                      />
-
-                      <FeatureSection
-                        title="3D Model Generation"
-                        description="Convert 2D images to 3D models using Hitem3D API."
-                        steps={[
-                          "1. Upload single image or four view images",
-                          "2. Select generation mode and type",
-                          "3. Choose resolution and format",
-                          "4. Generate and view your 3D model"
-                        ]}
-                      />
-
-                      <FeatureSection
-                        title="Workflow Pipeline"
-                        description="Complete workflow from concept to final asset."
-                        steps={[
-                          "1. Chat → Generate concept",
-                          "2. Images → Review and approve",
-                          "3. 3D Model → Generate from images",
-                          "4. Texture → Apply textures",
-                          "5. Rig → Auto-rigging",
-                          "6. Export → Download in various formats"
-                        ]}
-                      />
-                    </div>
-                  </div>
+            {activeTab === "features" && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="p-6 space-y-12 max-w-6xl mx-auto"
+              >
+                <div className="text-center mb-8">
+                  <h2 className="text-base font-bold tracking-tighter mb-4">System Capabilities</h2>
+                  <p className="text-muted-foreground text-sm max-w-2xl mx-auto">Master the complete Koye orchestration workflow from concept to deployment.</p>
                 </div>
-              )
-            }
 
-            {
-              activeTab === "accounts" && (
-                <div className="p-12 space-y-8">
-                  <div className="border-2 border-border p-6">
-                    <h2 className="text-2xl font-bold text-foreground mb-6">$ account_settings</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <FeatureSection
+                    title="Asset Orchestration"
+                    description="Unified hub for managing images, 3D models, videos, and acoustic signatures."
+                    steps={[
+                      "Visual asset generation and curation",
+                      "Cinematic sequence management",
+                      "3D mesh optimization pipeline",
+                      "Acoustic signature synthesis"
+                    ]}
+                  />
+                  <FeatureSection
+                    title="Project Architecture"
+                    description="Advanced workspace environments for deep project persistence and scaling."
+                    steps={[
+                      "Isolated deployment environments",
+                      "Binary asset synchronization",
+                      "Multi-user collaboration nodes",
+                      "Versioned history snapshots"
+                    ]}
+                  />
+                  <FeatureSection
+                    title="AI Compute Scaling"
+                    description="Dynamic credit allocation for heterogeneous high-performance generation tasks."
+                    steps={[
+                      "Priority compute scheduling",
+                      "Language model token analytics",
+                      "Credit-to-compute conversion nodes",
+                      "Usage threshold Monitoring"
+                    ]}
+                  />
+                  <FeatureSection
+                    title="Full Workflow Pipeline"
+                    description="End-to-end concept visualization and asset deployment logic."
+                    steps={[
+                      "Intent classification → Concept synthesis",
+                      "Multi-modal asset generation",
+                      "Automated rigging & texturing",
+                      "Cloud-native export protocols"
+                    ]}
+                  />
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === "accounts" && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="p-6 space-y-10 max-w-4xl mx-auto"
+              >
+                <div className="bg-foreground/5 border border-foreground/10 p-6 rounded-lg backdrop-blur-xl">
+                  <h2 className="text-sm font-bold tracking-tight mb-6 flex items-center gap-4">
+                    <Key className="w-5 h-5 text-foreground" />
+                    Security Protocol
+                  </h2>
+
+                  <div className="space-y-10">
+                    <div className="bg-foreground/5 p-6 rounded-xl border border-foreground/5">
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em] mb-2 block">Registered Terminal</label>
+                      <div className="text-sm font-bold text-foreground">{user.email}</div>
+                    </div>
 
                     <div className="space-y-6">
-                      <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Email</label>
-                        <div className="text-sm font-mono text-foreground">{user.email}</div>
+                      <h3 className="text-sm font-bold tracking-tight">Identity Synchronization</h3>
+
+                      {passwordError && (
+                        <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm font-bold">
+                          Protocol Error: {passwordError}
+                        </div>
+                      )}
+
+                      {passwordSuccess && (
+                        <div className="p-4 bg-green-500/10 border border-green-500/20 text-green-400 rounded-lg text-sm font-bold">
+                          Authorization Successful: {passwordSuccess}
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-1">Current Password</label>
+                          <input
+                            type="password"
+                            value={passwordForm.current}
+                            onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
+                            className="w-full bg-foreground/5 border border-foreground/10 px-5 py-4 rounded-lg text-foreground focus:outline-none focus:border-foreground/30/50 transition-all"
+                            placeholder="••••••••"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-1">New Key Signature</label>
+                          <input
+                            type="password"
+                            value={passwordForm.new}
+                            onChange={(e) => setPasswordForm({ ...passwordForm, new: e.target.value })}
+                            className="w-full bg-foreground/5 border border-foreground/10 px-5 py-4 rounded-lg text-foreground focus:outline-none focus:border-foreground/30/50 transition-all"
+                            placeholder="••••••••"
+                          />
+                        </div>
                       </div>
 
-                      {/* Change Password */}
-                      <div className="border-t border-border pt-6 space-y-4">
-                        <h3 className="text-lg font-bold text-foreground">$ change_password</h3>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-1">Confirm Signature</label>
+                        <input
+                          type="password"
+                          value={passwordForm.confirm}
+                          onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
+                          className="w-full bg-foreground/5 border border-foreground/10 px-5 py-4 rounded-lg text-foreground focus:outline-none focus:border-foreground/30/50 transition-all"
+                          placeholder="••••••••"
+                        />
+                      </div>
 
-                        {passwordError && (
-                          <div className="p-3 border border-red-500 bg-red-50 text-red-700 text-xs font-mono">
-                            $ error: {passwordError}
-                          </div>
-                        )}
+                      <button
+                        onClick={handleChangePassword}
+                        className="px-4 py-2 text-sm bg-foreground text-background hover:bg-foreground/90 font-bold rounded-lg hover:scale-105 transition-all shadow-sm flex items-center gap-3"
+                      >
+                        <Key className="h-5 w-5" />
+                        UPDATE SECURITY KEY
+                      </button>
+                    </div>
 
-                        {passwordSuccess && (
-                          <div className="p-3 border border-green-500 bg-green-50 text-green-700 text-xs font-mono">
-                            $ success: {passwordSuccess}
-                          </div>
-                        )}
+                    <div className="pt-10 border-t border-foreground/5">
+                      <h3 className="text-sm font-bold text-red-500 mb-6 flex items-center gap-3">
+                        <AlertTriangle className="w-4 h-4" />
+                        Terminal Purge
+                      </h3>
 
-                        <div className="space-y-3">
-                          <div>
-                            <label className="text-xs text-muted-foreground mb-1 block">Current Password</label>
-                            <input
-                              type="password"
-                              value={passwordForm.current}
-                              onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
-                              className="w-full bg-background border border-border px-3 py-2 text-foreground font-mono text-sm focus:outline-none focus:ring-0"
-                              placeholder="••••••••"
-                            />
-                          </div>
+                      <div className="p-5 bg-red-400/5 border border-red-500/20 rounded-xl space-y-6">
+                        <p className="text-sm text-red-300 leading-relaxed">
+                          Account deactivation is permanent. All cinematic sequences, 3D meshes, and project nodes will be purged from the Koye core in accordance with data safety protocols.
+                        </p>
 
-                          <div>
-                            <label className="text-xs text-muted-foreground mb-1 block">New Password</label>
-                            <input
-                              type="password"
-                              value={passwordForm.new}
-                              onChange={(e) => setPasswordForm({ ...passwordForm, new: e.target.value })}
-                              className="w-full bg-background border border-border px-3 py-2 text-foreground font-mono text-sm focus:outline-none focus:ring-0"
-                              placeholder="••••••••"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-xs text-muted-foreground mb-1 block">Confirm New Password</label>
-                            <input
-                              type="password"
-                              value={passwordForm.confirm}
-                              onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
-                              className="w-full bg-background border border-border px-3 py-2 text-foreground font-mono text-sm focus:outline-none focus:ring-0"
-                              placeholder="••••••••"
-                            />
-                          </div>
-
-                          <Button
-                            onClick={handleChangePassword}
-                            className="bg-foreground text-background hover:bg-muted-foreground border border-foreground font-mono text-sm"
+                        {!showDeleteConfirm ? (
+                          <button
+                            onClick={() => setShowDeleteConfirm(true)}
+                            className="px-3 py-1.5 text-xs bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-foreground rounded-xl transition-all font-bold text-xs"
                           >
-                            <Key className="h-4 w-4 mr-2" />
-                            $ change_password
-                          </Button>
-                        </div>
-                      </div>
-
-                      {/* Delete Account */}
-                      <div className="border-t border-border pt-6">
-                        <h3 className="text-lg font-bold text-red-600 mb-4">$ danger_zone</h3>
-
-                        <div className="p-4 border-2 border-red-500 bg-red-50 space-y-4">
-                          <div className="flex items-start gap-2">
-                            <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
-                            <div>
-                              <p className="text-sm font-bold text-red-600 mb-1">Delete Account</p>
-                              <p className="text-xs text-red-700">
-                                This action cannot be undone. All your data will be permanently deleted.
-                              </p>
+                            INITIATE PURGE
+                          </button>
+                        ) : (
+                          <div className="space-y-4">
+                            <p className="text-xs text-red-400 font-bold uppercase tracking-widest">Type "DELETE" to authorize purge</p>
+                            <div className="flex gap-4">
+                              <input
+                                type="text"
+                                placeholder="Authorization Key"
+                                className="flex-1 bg-foreground/5 border border-red-500/30 px-5 py-3 rounded-xl text-foreground focus:outline-none focus:border-red-500 transition-all"
+                                id="deleteConfirm"
+                              />
+                              <button
+                                onClick={() => {
+                                  const input = document.getElementById("deleteConfirm") as HTMLInputElement
+                                  if (input?.value === "DELETE") handleDeleteAccount()
+                                  else alert("Authorization failed: Keys do not match.")
+                                }}
+                                className="px-3 py-1.5 text-xs bg-red-600 text-foreground rounded-xl font-bold text-xs hover:bg-red-700 transition-all"
+                              >
+                                CONFIRM PURGE
+                              </button>
+                              <button
+                                onClick={() => setShowDeleteConfirm(false)}
+                                className="px-3 py-1.5 text-xs bg-foreground/5 text-muted-foreground rounded-xl font-bold text-xs hover:bg-foreground/10 transition-all"
+                              >
+                                ABORT
+                              </button>
                             </div>
                           </div>
-
-                          {!showDeleteConfirm ? (
-                            <Button
-                              onClick={() => setShowDeleteConfirm(true)}
-                              className="bg-red-600 text-white hover:bg-red-700 border border-red-600 font-mono text-sm"
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              $ delete_account
-                            </Button>
-                          ) : (
-                            <div className="space-y-2">
-                              <p className="text-xs text-red-700 font-bold">
-                                Are you sure? Type DELETE to confirm
-                              </p>
-                              <div className="flex gap-2">
-                                <input
-                                  type="text"
-                                  placeholder="Type DELETE"
-                                  className="flex-1 bg-background border border-red-500 px-3 py-2 text-foreground font-mono text-sm focus:outline-none focus:ring-0"
-                                  id="deleteConfirm"
-                                />
-                                <Button
-                                  onClick={() => {
-                                    const input = document.getElementById("deleteConfirm") as HTMLInputElement
-                                    if (input?.value === "DELETE") {
-                                      handleDeleteAccount()
-                                    } else {
-                                      alert("Please type DELETE to confirm")
-                                    }
-                                  }}
-                                  className="bg-red-600 text-white hover:bg-red-700 border border-red-600 font-mono text-sm"
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  $ confirm_delete
-                                </Button>
-                                <Button
-                                  onClick={() => setShowDeleteConfirm(false)}
-                                  className="bg-background text-foreground hover:bg-muted border border-border font-mono text-sm"
-                                >
-                                  $ cancel
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
+                        )}
                       </div>
                     </div>
                   </div>
                 </div>
-              )
-            }
+              </motion.div>
+            )}
 
-            {
-              activeTab === "projects" && (
-                <div className="p-12">
-                  <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-2xl font-bold text-foreground font-mono">$ projects</h2>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        onClick={() => setShowProjectDialog(true)}
-                        className="border-2 border-foreground font-mono text-xs font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor] bg-foreground text-background hover:bg-muted-foreground"
-                      >
-                        <Plus className="h-4 w-4 mr-2" />
-                        ADD PROJECT
-                      </Button>
-                    </div>
+            {activeTab === "projects" && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-6 max-w-7xl mx-auto"
+              >
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-base font-bold text-foreground tracking-tighter">Your Projects</h2>
+                    <p className="text-muted-foreground text-sm mt-2">Scale your ideas with dedicated workspace environments.</p>
                   </div>
+                  <button
+                    onClick={() => setShowProjectDialog(true)}
+                    className="px-4 py-2 text-sm bg-foreground text-background hover:bg-foreground/90 font-bold rounded-lg hover:scale-105 active:scale-95 transition-all shadow-sm flex items-center gap-3"
+                  >
+                    <Plus className="h-5 w-5" />
+                    NEW DEPLOYMENT
+                  </button>
+                </div>
 
-                  {isLoadingProjects ? (
-                    <div className="flex items-center justify-center py-12">
-                      <div className="text-muted-foreground font-mono">Loading projects...</div>
+                {isLoadingProjects ? (
+                  <div className="flex flex-col items-center justify-center py-32 gap-3">
+                    <div className="w-5 h-5 border-4 border-foreground/30/10 border-t-white rounded-full animate-spin" />
+                  </div>
+                ) : projects.length === 0 ? (
+                  <div className="bg-foreground/5 border-2 border-dashed border-foreground/10 rounded-lg p-24 text-center group hover:bg-foreground/10 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]">
+                    <div className="w-5 h-5 rounded-xl bg-foreground/5 text-foreground flex items-center justify-center mx-auto mb-8 group-hover:scale-110 transition-transform">
+                      <Folder className="h-4 w-4 text-foreground" />
                     </div>
-                  ) : projects.length === 0 ? (
-                    <div className="border-2 border-dashed border-border p-12 text-center">
-                      <p className="text-foreground/70 font-mono mb-4">No projects yet</p>
-                      <p className="text-muted-foreground text-sm font-mono mb-6">Create your first project to start building</p>
-                      <Button
-                        onClick={() => setShowProjectDialog(true)}
-                        className="bg-foreground text-background hover:bg-muted-foreground border-2 border-foreground font-mono text-xs font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
+                    <h3 className="text-sm font-bold text-foreground mb-4">No Active Deployments</h3>
+                    <p className="text-muted-foreground text-sm max-w-md mx-auto mb-6 leading-relaxed">Initiate your first project to enable file persistence, collaborative scaling, and AI orchestration.</p>
+                    <button
+                      onClick={() => setShowProjectDialog(true)}
+                      className="px-4 py-2 text-sm bg-foreground text-background font-bold rounded-xl hover:scale-105 transition-all tracking-tighter"
+                    >
+                      CREATE YOUR FIRST WORKSPACE
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {projects.map((project) => (
+                      <motion.div
+                        key={project.id}
+                        whileHover={{ y: -5 }}
+                        onClick={() => handleOpenProject(project)}
+                        className="bg-foreground/5 border border-foreground/10 p-4 rounded-xl cursor-pointer hover:bg-foreground/10 transition-all group relative overflow-hidden flex flex-col justify-between aspect-[2/1]"
                       >
-                        <Plus className="h-4 w-4 mr-2" />
-                        CREATE PROJECT
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {projects.map((project) => (
-                        <div
-                          key={project.id}
-                          onClick={() => handleOpenProject(project)}
-                          className="border-2 border-border p-6 cursor-pointer hover:bg-muted transition-colors bg-background relative group"
-                        >
+                        <div className="absolute top-0 right-0 p-3 opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all duration-300 z-10">
                           <button
                             onClick={(e) => handleDeleteProject(e, project.id)}
-                            className="absolute top-2 right-2 p-1.5 bg-red-600 hover:bg-red-700 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Delete project"
+                            className="p-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-all"
+                            title="Purge project"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
-                          <h3 className="text-lg font-bold text-foreground mb-2 font-mono">{project.name}</h3>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className="p-2 rounded-lg bg-foreground/5 text-foreground flex items-center justify-center group-hover:bg-foreground group-hover:text-background transition-all duration-300">
+                              <Folder className="h-4 w-4" />
+                            </div>
+                            <h3 className="text-sm font-bold text-foreground tracking-tight group-hover:text-foreground transition-colors truncate pr-8">{project.name}</h3>
+                          </div>
                           {project.description && (
-                            <p className="text-sm text-foreground/70 mb-4 font-mono line-clamp-2">{project.description}</p>
+                            <p className="text-xs text-muted-foreground line-clamp-1 leading-relaxed">{project.description}</p>
                           )}
-                          <div className="text-xs text-muted-foreground font-mono">
-                            Created: {new Date(project.createdAt).toLocaleDateString()}
+                        </div>
+
+                        <div className="flex items-center justify-between pt-3 border-t border-foreground/5 mt-3">
+                          <div className="flex items-center gap-2">
+                            <Calendar className="h-3 w-3 text-muted-foreground/50" />
+                            <span className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-widest">
+                              {new Date(project.createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <div className="w-4 h-4 rounded-full border border-foreground/10 flex items-center justify-center group-hover:bg-foreground group-hover:text-background transition-all">
+                            <ChevronRight className="h-3 w-3" />
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            }
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            )}
           </div >
         </div >
       </div >
@@ -1731,18 +1457,18 @@ export function Dashboard() {
                     setCurrentImageIndex(newIndex)
                     setSelectedImage(imageGroup[newIndex])
                   }}
-                  className="p-2 text-white hover:bg-white/10 rounded-full transition-colors shrink-0"
+                  className="p-2 text-foreground hover:bg-foreground/10 rounded-full transition-colors shrink-0"
                 >
-                  <ChevronLeft className="h-8 w-8" />
+                  <ChevronLeft className="h-5 w-5" />
                 </button>
               )}
 
               <div className="relative max-w-4xl max-h-full">
                 <button
                   onClick={() => setSelectedImage(null)}
-                  className="absolute -top-10 right-0 text-white hover:text-white/70"
+                  className="absolute -top-6 right-0 text-foreground hover:text-foreground/70"
                 >
-                  <X className="h-6 w-6" />
+                  <X className="h-4 w-4" />
                 </button>
                 <img
                   src={selectedImage}
@@ -1751,7 +1477,7 @@ export function Dashboard() {
                 />
                 {/* Counter */}
                 {imageGroup && imageGroup.length > 1 && (
-                  <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/50 text-white px-3 py-1 rounded-full text-sm font-mono">
+                  <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/50 text-foreground px-3 py-1 rounded-full text-sm font-mono">
                     {currentImageIndex + 1} / {imageGroup.length}
                   </div>
                 )}
@@ -1766,9 +1492,9 @@ export function Dashboard() {
                     setCurrentImageIndex(newIndex)
                     setSelectedImage(imageGroup[newIndex])
                   }}
-                  className="p-2 text-white hover:bg-white/10 rounded-full transition-colors shrink-0"
+                  className="p-2 text-foreground hover:bg-foreground/10 rounded-full transition-colors shrink-0"
                 >
-                  <ChevronRight className="h-8 w-8" />
+                  <ChevronRight className="h-5 w-5" />
                 </button>
               )}
             </div>
@@ -1782,7 +1508,7 @@ export function Dashboard() {
           <div className="fixed inset-0 z-50 bg-background">
             <div className="h-full flex flex-col">
               <div className="border-b border-border px-6 py-4 flex items-center justify-between shrink-0">
-                <h2 className="text-lg font-bold text-foreground font-mono">$ 3d_model_viewer</h2>
+                <h2 className="text-sm font-bold text-foreground font-mono">$ 3d_model_viewer</h2>
                 <button
                   onClick={() => setSelectedModel(null)}
                   className="p-2 hover:bg-muted rounded"
@@ -1808,9 +1534,9 @@ export function Dashboard() {
             <div className="relative max-w-4xl max-h-full w-full" onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => setSelectedVideo(null)}
-                className="absolute -top-10 right-0 text-white hover:text-white/70"
+                className="absolute -top-6 right-0 text-foreground hover:text-foreground/70"
               >
-                <X className="h-6 w-6" />
+                <X className="h-4 w-4" />
               </button>
               <VideoPlayer
                 videoUrl={selectedVideo}
@@ -1822,59 +1548,58 @@ export function Dashboard() {
       }
 
       {/* Delete Confirmation Dialog */}
-      {
-        showDeleteConfirm && itemToDelete && (
-          <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => {
+      {showDeleteConfirm && itemToDelete && (
+        <div 
+          className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-4" 
+          onClick={() => {
             setShowDeleteConfirm(false)
             setItemToDelete(null)
-          }}>
-            <div className="bg-background border-2 border-border w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold text-foreground font-mono">$ delete_{itemToDelete.type}</h2>
-                <button
-                  onClick={() => {
-                    setShowDeleteConfirm(false)
-                    setItemToDelete(null)
-                  }}
-                  className="p-2 hover:bg-muted rounded"
-                >
-                  <X className="h-5 w-5 text-foreground" />
-                </button>
+          }}
+        >
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-background/80 backdrop-blur-2xl border border-foreground/10 w-full max-w-sm p-6 rounded-2xl shadow-xl space-y-6" 
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center text-red-500">
+                <Trash2 className="h-6 w-6" />
               </div>
-
-              <div className="mb-6">
-                <p className="text-sm text-muted-foreground font-mono mb-2">
-                  Are you sure you want to delete this {itemToDelete.type}?
+              <div>
+                <h2 className="text-base font-bold text-foreground mb-1 tracking-tight">Confirm Deletion</h2>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Are you sure you want to permanently delete this {itemToDelete.type}? This action cannot be reversed.
                 </p>
-                <p className="text-xs text-muted-foreground font-mono">
-                  This action cannot be undone.
-                </p>
-              </div>
-
-              <div className="flex gap-2">
-                <Button
-                  onClick={handleDeleteItem}
-                  disabled={isDeleting}
-                  className="flex-1 bg-red-600 text-white hover:bg-red-700 border border-red-600 font-mono disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  {isDeleting ? "Deleting..." : "Delete"}
-                </Button>
-                <Button
-                  onClick={() => {
-                    setShowDeleteConfirm(false)
-                    setItemToDelete(null)
-                  }}
-                  variant="outline"
-                  className="flex-1 border-border bg-background text-foreground hover:bg-muted font-mono"
-                >
-                  Cancel
-                </Button>
               </div>
             </div>
-          </div>
-        )
-      }
+
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setShowDeleteConfirm(false)
+                  setItemToDelete(null)
+                }}
+                className="flex-1 px-4 py-2 text-xs font-bold bg-foreground/5 hover:bg-foreground/10 text-foreground rounded-lg transition-all border border-foreground/5"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteItem}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2 text-xs font-bold bg-red-500 text-white hover:bg-red-600 rounded-lg transition-all shadow-lg shadow-red-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isDeleting ? (
+                  <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <Trash2 className="h-3 w-3" />
+                )}
+                {isDeleting ? "Processing..." : "Purge Asset"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Create Project Dialog */}
       {
@@ -1882,7 +1607,7 @@ export function Dashboard() {
           <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={() => setShowProjectDialog(false)}>
             <div className="bg-background border-2 border-border w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold text-foreground font-mono">$ create_project</h2>
+                <h2 className="text-sm font-bold text-foreground font-mono">$ create_project</h2>
                 <button
                   onClick={() => setShowProjectDialog(false)}
                   className="p-2 hover:bg-muted rounded"
@@ -1946,7 +1671,7 @@ export function Dashboard() {
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-background border-2 border-border w-full max-w-md p-6 shadow-[8px_8px_0px_0px_hsl(var(--foreground)/0.2)]">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-xl font-bold text-foreground font-mono">Import to Project</h3>
+                <h3 className="text-sm font-bold text-foreground font-mono">Import to Project</h3>
                 <button
                   onClick={() => setShowImportDialog(false)}
                   className="p-2 hover:bg-muted rounded"
@@ -2019,7 +1744,7 @@ export function Dashboard() {
       {/* Project Creation Loading Overlay */}
       {isCreatingProject && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-md">
-          <div className="flex flex-col items-center gap-4 p-8 bg-background border border-border shadow-2xl rounded-xl">
+          <div className="flex flex-col items-center gap-4 p-5 bg-background border border-border shadow-2xl rounded-xl">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-foreground" />
             <p className="text-foreground font-mono font-bold tracking-tight">Creating your project...</p>
           </div>
@@ -2044,36 +1769,73 @@ function NavItem({ icon: Icon, label, active, collapsed, number, badge, onClick 
     <button
       onClick={onClick}
       className={cn(
-        "w-full flex items-center gap-3 px-3 py-2 rounded border transition-colors text-sm",
+        "w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-300 group relative overflow-hidden",
         active
-          ? "bg-foreground text-background border-foreground"
-          : "bg-background text-foreground border-border hover:bg-muted",
-        collapsed && "justify-center"
+          ? "bg-foreground/5 text-foreground text-foreground border border-foreground/10 shadow-[0_0_20px_rgba(var(--primary-rgb),0.1)]"
+          : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground border border-transparent",
+        collapsed && "justify-center px-2"
       )}
     >
-      <Icon className="h-4 w-4 shrink-0" />
-      {!collapsed && <span className="flex-1 text-left">{label}</span>}
+      {active && (
+        <motion.div
+          layoutId="activeTab"
+          className="absolute left-0 w-1 h-6 bg-foreground text-background hover:bg-foreground/90 rounded-r-full"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        />
+      )}
+      <Icon className={cn("h-5 w-5 shrink-0 transition-transform group-hover:scale-110", active && "text-foreground")} />
+      {!collapsed && <span className="flex-1 text-left font-medium tracking-tight">{label}</span>}
       {!collapsed && (number || badge) && (
-        <span className="text-xs">{number || badge}</span>
+        <span className={cn(
+          "text-[10px] font-bold px-2 py-0.5 rounded-full",
+          active ? "bg-foreground/5 text-foreground text-foreground" : "bg-foreground/10 text-muted-foreground"
+        )}>
+          {number || badge}
+        </span>
       )}
     </button>
   )
 }
 
-interface FeatureSectionProps {
-  title: string
-  description: string
-  steps: string[]
+function UsageCard({ label, input, output, total, accent }: { label: string, input: number, output: number, total: number, accent: 'primary' | 'blue' | 'purple' }) {
+  const textColor = accent === 'primary' ? 'text-foreground' : accent === 'blue' ? 'text-foreground' : 'text-purple-400';
+
+  return (
+    <div className="bg-foreground/5 border border-foreground/10 p-6 rounded-xl hover:bg-foreground/10 transition-all">
+      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-4">{label}</p>
+      <div className="space-y-3">
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-muted-foreground">Input Tokens</span>
+          <span className="text-sm font-bold text-foreground">{formatTokenCount(input)}</span>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-muted-foreground">Output Tokens</span>
+          <span className="text-sm font-bold text-foreground">{formatTokenCount(output)}</span>
+        </div>
+        <div className="pt-3 border-t border-foreground/5 flex justify-between items-center">
+          <span className="text-sm font-bold text-foreground">Total Usage</span>
+          <span className={cn("text-sm font-bold", textColor)}>{formatTokenCount(total)}</span>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function FeatureSection({ title, description, steps }: FeatureSectionProps) {
   return (
-    <div className="border border-border p-4">
-      <h3 className="text-lg font-bold text-foreground mb-2">{title}</h3>
-      <p className="text-sm text-muted-foreground mb-3">{description}</p>
-      <ul className="space-y-1">
+    <div className="bg-foreground/5 border border-foreground/10 backdrop-blur-md p-6 rounded-xl hover:bg-foreground/10 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-4 h-4 rounded-lg bg-foreground/5 text-foreground flex items-center justify-center group-hover:scale-110 transition-transform">
+          <Layers className="w-5 h-5 text-foreground" />
+        </div>
+        <h3 className="text-sm font-bold text-foreground tracking-tight">{title}</h3>
+      </div>
+      <p className="text-sm text-muted-foreground mb-6 leading-relaxed">{description}</p>
+      <ul className="space-y-3">
         {steps.map((step, index) => (
-          <li key={index} className="text-xs text-muted-foreground font-mono">
+          <li key={index} className="text-xs text-muted-foreground flex items-center gap-3">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary/40 shrink-0" />
             {step}
           </li>
         ))}

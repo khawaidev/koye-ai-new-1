@@ -41,12 +41,65 @@ const riggingTaskMeta = new Map<string, {
     runUrl?: string;
 }>();
 
-export async function createRiggingTask(options: { input_task_id?: string; model_url?: string }): Promise<string> {
+// Ensure delay
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function importModel(modelUrl: string, apiKey: string): Promise<string> {
+    const payload = {
+        type: "import_model",
+        file: {
+            type: "glb",
+            url: modelUrl
+        }
+    };
+
+    const response = await fetch(`${TRIPO_API_BASE}/task`, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+    }
+
+    const data = await response.json();
+    if (data.code !== 0) {
+        throw new Error(`Tripo Error ${data.code}: ${data.message || 'Unknown'}`);
+    }
+
+    const taskId = data.data.task_id;
+    
+    // Poll for import completion
+    let isComplete = false;
+    let attempts = 0;
+    while (!isComplete && attempts < 30) {
+        attempts++;
+        await sleep(2000);
+        const pollRes = await fetch(`${TRIPO_API_BASE}/task/${taskId}`, {
+            headers: { "Authorization": `Bearer ${apiKey}` }
+        });
+        const pollData = await pollRes.json();
+        const status = pollData.data?.status;
+        if (status === "success") {
+            isComplete = true;
+        } else if (status === "failed" || status === "cancelled") {
+            throw new Error(`Import task failed with status: ${status}`);
+        }
+    }
+    
+    return taskId;
+}
+
+export async function createRiggingTask(options: { input_task_id?: string; model_url?: string; rig_type?: string }): Promise<string> {
     const keys = getAllTripoApiKeys();
     let lastError: any = null;
 
-    if (!options.input_task_id) {
-        throw new Error("Tripo auto-rigging requires an input_task_id from a previous model generation.");
+    if (!options.input_task_id && !options.model_url) {
+        throw new Error("Tripo auto-rigging requires either an input_task_id or a model_url.");
     }
 
     for (let i = 0; i < keys.length; i++) {
@@ -54,13 +107,19 @@ export async function createRiggingTask(options: { input_task_id?: string; model
         try {
             console.log(`[Tripo] Creating rig task with key ${i + 1}`);
 
-            // Optional: We could run prerigcheck here, but to save latency we jump to animate_rig.
-            // If it fails, Tripo will return an error immediately or in task status.
+            let originalTaskId = options.input_task_id;
+            
+            // If we only have a model_url, import it first
+            if (!originalTaskId && options.model_url) {
+                console.log(`[Tripo] Importing model first: ${options.model_url}`);
+                originalTaskId = await importModel(options.model_url, apiKey);
+            }
 
             const payload = {
                 type: "animate_rig",
-                original_model_task_id: options.input_task_id,
-                out_format: "glb"
+                original_model_task_id: originalTaskId,
+                out_format: "glb",
+                rig_type: options.rig_type || "biped"
             };
 
             const response = await fetch(`${TRIPO_API_BASE}/task`, {

@@ -740,14 +740,11 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
     }
 
     return (
-        <div className="w-64 border-r-2 border-border bg-background flex flex-col h-full font-mono">
-            {/* Header */}
-            <div className="px-4 py-3 border-b-2 border-border bg-muted/50">
-                <h3 className="text-xs font-bold text-foreground tracking-wider">FILE EXPLORER</h3>
-            </div>
+        <div className="w-64 border-r border-white/10 bg-background flex flex-col h-full font-mono">
+
 
             {/* Creation Buttons */}
-            <div className="p-3 border-b-2 border-border flex gap-1.5 bg-background items-center">
+            <div className="p-3 border-b border-white/10 flex gap-1.5 bg-background items-center">
                 <input 
                     type="file" 
                     multiple 
@@ -759,7 +756,7 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                     variant="outline"
                     size="sm"
                     onClick={() => setShowNewFileDialog(true)}
-                    className="flex-1 px-1 border-2 border-border hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-[10px] font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
+                    className="flex-1 px-1 border border-white/10 hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-[10px] font-bold transition-all shadow-sm"
                     title="New File"
                 >
                     <File className="h-3 w-3 mr-1" />
@@ -769,7 +766,7 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                     variant="outline"
                     size="sm"
                     onClick={() => setShowNewFolderDialog(true)}
-                    className="flex-1 px-1 border-2 border-border hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-[10px] font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
+                    className="flex-1 px-1 border border-white/10 hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-[10px] font-bold transition-all shadow-sm"
                     title="New Folder"
                 >
                     <Folder className="h-3 w-3 mr-1" />
@@ -779,7 +776,7 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                     variant="outline"
                     size="sm"
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex-1 px-1 border-2 border-border hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-[10px] font-bold transition-all shadow-[2px_2px_0px_0px_currentColor] hover:shadow-[1px_1px_0px_0px_currentColor]"
+                    className="flex-1 px-1 border border-white/10 hover:bg-foreground hover:text-background bg-background text-foreground font-mono text-[10px] font-bold transition-all shadow-sm"
                     title="Upload File"
                 >
                     <Upload className="h-3 w-3 mr-1" />
@@ -791,7 +788,7 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                     <button
                         onClick={() => setShowSettingsMenu(!showSettingsMenu)}
                         className={cn(
-                            "p-1.5 border-2 border-border rounded transition-all hover:bg-foreground hover:text-background",
+                            "p-1.5 border border-white/10 rounded transition-all hover:bg-foreground hover:text-background",
                             showSettingsMenu ? "bg-foreground text-background" : "bg-background text-foreground"
                         )}
                         title="File Options"
