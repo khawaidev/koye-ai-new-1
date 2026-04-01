@@ -602,7 +602,8 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
                 {/* Right Sidebar - Inspector */}
                 <div 
                     className={cn(
-                        "relative flex shrink-0 transition-all duration-300 ease-in-out border-l border-white/10",
+                        "relative flex shrink-0 border-l border-white/10",
+                        !isResizingInspector && "transition-all duration-300 ease-in-out",
                         isInspectorCollapsed ? "w-0 border-none" : "w-auto"
                     )}
                     style={{ 

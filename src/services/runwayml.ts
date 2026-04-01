@@ -204,13 +204,17 @@ export async function generateImageWithRunway(
 export async function editImageWithRunway(
   prompt: string,
   imageBase64?: string,
-  imageMimeType: string = "image/png"
+  imageMimeType: string = "image/png",
+  options?: {
+    model?: RunwayImageModel;
+    ratio?: string;
+  }
 ): Promise<string> {
   // Build the request body
   const body: any = {
-    model: "gen4_image_turbo",
+    model: options?.model || "gen4_image_turbo",
     promptText: prompt,
-    ratio: "1024:1024" as RunwayRatio,
+    ratio: options?.ratio || "1024:1024",
   }
 
   // If a source image is provided, include it as a reference image

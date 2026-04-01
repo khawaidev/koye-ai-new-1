@@ -21,6 +21,7 @@ export interface TTSOptions {
   stability?: number
   similarityBoost?: number
   speed?: number
+  style?: number
 }
 
 /**
@@ -43,6 +44,7 @@ export async function generateSpeech(
     stability = 0.5,
     similarityBoost = 0.75,
     speed = 1.0,
+    style = 0.0,
   } = options
 
   let lastError: Error | null = null
@@ -64,6 +66,7 @@ export async function generateSpeech(
               stability,
               similarity_boost: similarityBoost,
               speed,
+              style,
             },
           }),
         }

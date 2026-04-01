@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ColorFlow | 60-30-10 Design System</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Initial 60-30-10 palette */
+      --color-60: #ffffff;
+      --color-30: #f8f9fa;
+      --color-10: #000000;
+      
+      --text-main: #111827;
+      --text-muted: #6b7280;
+      --accent-soft: #fbf2c0; /* Yellow highlight from image */
+      
+      --radius-full: 9999px;
+      --radius-lg: 24px;
+      --radius-md: 16px;
+      
+      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+      --shadow-lg: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+      --shadow-premium: 0 25px 50px -12px rgba(0, 0, 0, 0.08);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Inter', sans-serif;
+      transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+    }
+
+    body {
+      background-color: var(--color-60);
+      color: var(--text-main);
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
+
+    /* Navigation */
+    .nav-wrapper {
+      position: fixed;
+      top: 24px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .navbar {
+      background: rgba(255, 255, 255, 0.8);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(0, 0, 0, 0.05);
+      padding: 8px 8px 8px 24px;
+      border-radius: var(--radius-full);
+      display: flex;
+      align-items: center;
+      gap: 40px;
+      box-shadow: var(--shadow-md);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: 'Outfit', sans-serif;
+      font-weight: 700;
+      font-size: 20px;
+      letter-spacing: -0.02em;
+    }
+
+    .logo-icon {
+      width: 24px;
+      height: 24px;
+      background: var(--color-10);
+      color: var(--color-60);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 24px;
+    }
+
+    .nav-links a {
+      text-decoration: none;
+      color: var(--text-main);
+      font-size: 14px;
+      font-weight: 500;
+      opacity: 0.7;
+      transition: opacity 0.2s;
+    }
+
+    .nav-links a:hover {
+      opacity: 1;
+    }
+
+    .nav-cta {
+      background: var(--color-10);
+      color: var(--color-60);
+      padding: 10px 24px;
+      border-radius: var(--radius-full);
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Hero Section */
+    .hero {
+      padding-top: 160px;
+      padding-bottom: 80px;
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 60px;
+      align-items: center;
+    }
+
+    .hero-content h1 {
+      font-family: 'Outfit', sans-serif;
+      font-size: 72px;
+      line-height: 1.05;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 24px;
+      letter-spacing: -0.04em;
+    }
+
+    .hero-content p {
+      font-size: 18px;
+      line-height: 1.6;
+      color: var(--text-muted);
+      margin-bottom: 40px;
+      max-width: 480px;
+    }
+
+    .hero-btns {
+      display: flex;
+      gap: 16px;
+    }
+
+    .btn {
+      padding: 14px 28px;
+      border-radius: var(--radius-full);
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn-main {
+      background: var(--color-10);
+      color: var(--color-60);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      border: 1.5px solid rgba(0, 0, 0, 0.1);
+      color: var(--text-main);
+    }
+
+    /* Visual Elements (Right Side) */
+    .visual-stack {
+      position: relative;
+      height: 500px;
+    }
+
+    .card {
+      position: absolute;
+      background: #ffffff;
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-premium);
+      padding: 24px;
+      border: 1px solid rgba(0, 0, 0, 0.03);
+    }
+
+    /* Customers Card */
+    .floating-card-1 {
+      width: 400px;
+      top: 0;
+      right: 40px;
+      z-index: 2;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    .card-title {
+      font-weight: 600;
+      font-size: 18px;
+    }
+
+    .card-sort {
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .customer-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .customer-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border-radius: var(--radius-md);
+      transition: background 0.2s;
+    }
+
+    .customer-item.active {
+      background: var(--accent-soft);
+    }
+
+    .avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #eee;
+      flex-shrink: 0;
+    }
+
+    .cust-info .name {
+      font-weight: 600;
+      font-size: 14px;
+      display: block;
+    }
+
+    .cust-info .sub {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .cust-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Stats Card */
+    .floating-card-2 {
+      width: 240px;
+      bottom: 20px;
+      right: 0;
+      z-index: 3;
+    }
+
+    .stats-header {
+      margin-bottom: 16px;
+    }
+
+    .stats-label {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .stats-value {
+      font-size: 24px;
+      font-weight: 700;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    .stats-growth {
+      color: #ef4444;
+      font-size: 12px;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+
+    .chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      height: 60px;
+      margin-top: 20px;
+    }
+
+    .chart-bar {
+      flex: 1;
+      border-radius: 4px;
+      background: #e2e8f0;
+      transition: height 0.5s ease;
+    }
+
+    .chart-bar.accent {
+      background: var(--color-10);
+      opacity: 0.8;
+    }
+
+    .chart-bar.secondary {
+      background: #fdf2f2;
+      border: 1px solid #fee2e2;
+    }
+
+    /* Dashboard Logos */
+    .client-logos {
+      display: flex;
+      justify-content: center;
+      gap: 60px;
+      margin-top: 40px;
+      opacity: 0.3;
+      filter: grayscale(1);
+    }
+
+    .logo-item {
+      font-weight: 700;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Configuration Panel (Sidebar Floating) */
+    .config-panel {
+      position: fixed;
+      left: 40px;
+      bottom: 40px;
+      background: rgba(255, 255, 255, 0.9);
+      backdrop-filter: blur(12px);
+      padding: 24px;
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      border: 1px solid rgba(0, 0, 0, 0.05);
+      width: 320px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .config-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .config-header h3 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .lock-btn {
+      background: #f3f4f6;
+      border: none;
+      padding: 6px 12px;
+      border-radius: var(--radius-full);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .lock-btn.active {
+      background: var(--color-10);
+      color: var(--color-60);
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .input-group label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      letter-spacing: 0.05em;
+    }
+
+    .color-row {
+      display: flex;
+      gap: 10px;
+    }
+
+    .hex-input {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      font-size: 13px;
+      font-family: monospace;
+      outline: none;
+    }
+
+    .hex-input:focus {
+      border-color: var(--color-10);
+    }
+
+    .picker-wrapper {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #e5e7eb;
+      flex-shrink: 0;
+    }
+
+    input[type="color"] {
+      width: 150%;
+      height: 150%;
+      margin: -25%;
+      border: none;
+      cursor: pointer;
+    }
+
+    @media (max-width: 1024px) {
+      .hero {
+        grid-template_columns: 1fr;
+        padding-top: 120px;
+        text-align: center;
+      }
+      .hero-content p { margin: 0 auto 40px; }
+      .hero-btns { justify-content: center; }
+      .visual-stack { display: none; }
+      .config-panel { left: 50%; transform: translateX(-50%); width: 90%; bottom: 20px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <div class="nav-wrapper">
+    <nav class="navbar">
+      <div class="logo">
+        <div class="logo-icon">⚡</div>
+        Grovia
+      </div>
+      <div class="nav-links">
+        <a href="#">About</a>
+        <a href="#">Feature</a>
+        <a href="#">Pricing</a>
+      </div>
+      <a href="#" class="nav-cta">
+        Contact us
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+      </a>
+    </nav>
+  </div>
+
+  <!-- Hero Section -->
+  <main class="hero">
+    <div class="hero-content">
+      <h1>Strategy and growth for modern teams</h1>
+      <p>Grovia partners with startups and small businesses to streamline operations, elevate team performance, and build a foundation for lasting success.</p>
+      <div class="hero-btns">
+        <button class="btn btn-main">
+          Get started
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+        </button>
+        <button class="btn btn-secondary">Contact us</button>
+      </div>
+    </div>
+
+    <div class="visual-stack">
+      <!-- Customers Card -->
+      <div class="card floating-card-1">
+        <div class="card-header">
+          <span class="card-title">Customers</span>
+          <span class="card-sort">Sort by Newest <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+        </div>
+        <div class="customer-list">
+          <div class="customer-item active">
+            <img src="https://ui-avatars.com/api/?name=Maggie+Johnson&background=ff6b6b&color=fff" class="avatar" alt="Avatar">
+            <div class="cust-info">
+              <span class="name">Maggie Johnson</span>
+              <span class="sub">Oasis Organic Inc.</span>
+            </div>
+            <div class="cust-actions">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></circle></svg>
+            </div>
+          </div>
+          <div class="customer-item">
+            <img src="https://ui-avatars.com/api/?name=Chris+Friedly&background=4ecdc4&color=fff" class="avatar" alt="Avatar">
+            <div class="cust-info">
+              <span class="name">Chris Friedly</span>
+              <span class="sub">Supermarket Villanova</span>
+            </div>
+          </div>
+          <div class="customer-item">
+            <img src="https://ui-avatars.com/api/?name=Gael+Harry&background=ff9f43&color=fff" class="avatar" alt="Avatar">
+            <div class="cust-info">
+              <span class="name">Gael Harry</span>
+              <span class="sub">New York Finest Fruits</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats Card -->
+      <div class="card floating-card-2">
+        <div class="stats-header">
+          <div class="stats-label">Daily Average</div>
+          <div style="display: flex; align-items: baseline;">
+            <div class="stats-value">2h 20m</div>
+            <span class="stats-growth">+30m <span style="font-weight: 400; color: #94a3b8">this week</span></span>
+          </div>
+        </div>
+        <div class="chart">
+          <div class="chart-bar" style="height: 30%"></div>
+          <div class="chart-bar" style="height: 50%"></div>
+          <div class="chart-bar accent" style="height: 80%"></div>
+          <div class="chart-bar" style="height: 45%"></div>
+          <div class="chart-bar" style="height: 60%"></div>
+          <div class="chart-bar secondary" style="height: 40%"></div>
+          <div class="chart-bar" style="height: 35%"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 10px; color: #94a3b8; font-weight: 600;">
+          <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Client Logos (Filler) -->
+  <div class="client-logos">
+    <div class="logo-item"><div>🏥</div> VitaHealth</div>
+    <div class="logo-item"><div>🚀</div> NaviAI</div>
+    <div class="logo-item"><div>🌸</div> Lumora</div>
+    <div class="logo-item"><div>🛡️</div> NovaTech</div>
+  </div>
+
+  <!-- Configuration Panel -->
+  <div class="config-panel" id="configPanel">
+    <div class="config-header">
+      <h3>Color System</h3>
+      <button id="lockBtn" class="lock-btn">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+        Lock 60-30-10
+      </button>
+    </div>
+
+    <div class="input-group">
+      <label>60% Primary (BG)</label>
+      <div class="color-row">
+        <input type="text" id="hex60" class="hex-input" value="#ffffff">
+        <div class="picker-wrapper">
+          <input type="color" id="picker60" value="#ffffff">
+        </div>
+      </div>
+    </div>
+
+    <div class="input-group">
+      <label>30% Secondary (Surfaces)</label>
+      <div class="color-row">
+        <input type="text" id="hex30" class="hex-input" value="#f8f9fa">
+        <div class="picker-wrapper">
+          <input type="color" id="picker30" value="#f8f9fa">
+        </div>
+      </div>
+    </div>
+
+    <div class="input-group">
+      <label>10% Accent (Actions)</label>
+      <div class="color-row">
+        <input type="text" id="hex10" class="hex-input" value="#000000">
+        <div class="picker-wrapper">
+          <input type="color" id="picker10" value="#000000">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      isLocked: false,
+      colors: {
+        bg: '#ffffff',
+        surface: '#f8f9fa',
+        accent: '#000000'
+      }
+    };
+
+    const elements = {
+      lockBtn: document.getElementById('lockBtn'),
+      hex60: document.getElementById('hex60'),
+      hex30: document.getElementById('hex30'),
+      hex10: document.getElementById('hex10'),
+      picker60: document.getElementById('picker60'),
+      picker30: document.getElementById('picker30'),
+      picker10: document.getElementById('picker10'),
+      root: document.documentElement
+    };
+
+    // --- Helper Functions ---
+
+    function hexToHsl(hex) {
+      let r = parseInt(hex.slice(1, 3), 16) / 255;
+      let g = parseInt(hex.slice(3, 5), 16) / 255;
+      let b = parseInt(hex.slice(5, 7), 16) / 255;
+      let max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let h, s, l = (max + min) / 2;
+      if (max == min) { h = s = 0; }
+      else {
+        let d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return [h * 360, s * 100, l * 100];
+    }
+
+    function hslToHex(h, s, l) {
+      l /= 100;
+      const a = s * Math.min(l, 1 - l) / 100;
+      const f = n => {
+        const k = (n + h / 30) % 12;
+        const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * color).toString(16).padStart(2, '0');
+      };
+      return `#${f(0)}${f(8)}${f(4)}`;
+    }
+
+    // --- Algorithm: The 60-30-10 Lock ---
+    // When locked, we derive a palette from the hue of the color that was changed.
+    // BG (60%): Very light (98%) or very dark (10%)
+    // Surface (30%): Slightly more saturated/darker than BG
+    // Accent (10%): The core expression of the hue
+    
+    function applyLock(baseHex, sourceId) {
+      const [h, s, l] = hexToHsl(baseHex);
+      
+      // We'll assume a "Light Mode" professional profile similar to the image
+      // but if the base color is very dark, we could switch to dark profile.
+      const isDarkBase = l < 40;
+      
+      let newColors = {};
+      
+      if (isDarkBase) {
+        newColors = {
+          bg: hslToHex(h, 15, 10),      // 60%
+          surface: hslToHex(h, 20, 18), // 30%
+          accent: hslToHex(h, 80, 60)   // 10%
+        };
+      } else {
+        newColors = {
+          bg: hslToHex(h, 5, 98),       // 60%
+          surface: hslToHex(h, 10, 94),  // 30%
+          accent: hslToHex(h, 90, 45)   // 10%
+        };
+      }
+
+      // If the user manually edited the accent, maybe they want THAT to be the accent?
+      if (sourceId.includes('10')) {
+        newColors.accent = baseHex;
+      } else if (sourceId.includes('60')) {
+        newColors.bg = baseHex;
+      } else if (sourceId.includes('30')) {
+        newColors.surface = baseHex;
+      }
+
+      state.colors.bg = newColors.bg;
+      state.colors.surface = newColors.surface;
+      state.colors.accent = newColors.accent;
+      
+      updateInputs();
+      syncUI();
+    }
+
+    function updateInputs() {
+      elements.hex60.value = state.colors.bg;
+      elements.picker60.value = state.colors.bg;
+      
+      elements.hex30.value = state.colors.surface;
+      elements.picker30.value = state.colors.surface;
+      
+      elements.hex10.value = state.colors.accent;
+      elements.picker10.value = state.colors.accent;
+    }
+
+    function syncUI() {
+      elements.root.style.setProperty('--color-60', state.colors.bg);
+      elements.root.style.setProperty('--color-30', state.colors.surface);
+      elements.root.style.setProperty('--color-10', state.colors.accent);
+      
+      // Auto-detect text contrast for the accent button
+      const [h,s,l] = hexToHsl(state.colors.accent);
+      const contrastColor = l > 60 ? '#000000' : '#ffffff';
+      elements.root.style.setProperty('--color-60-text', contrastColor); // Used if we want to override text on accent
+    }
+
+    // --- Event Listeners ---
+
+    function handleColorChange(e) {
+      const val = e.target.value;
+      const id = e.target.id;
+      
+      if (id.startsWith('hex')) {
+        if (!/^#[0-9A-F]{6}$/i.test(val)) return; // Simple hex check
+      }
+
+      const key = id.includes('60') ? 'bg' : id.includes('30') ? 'surface' : 'accent';
+      state.colors[key] = val;
+
+      if (state.isLocked) {
+        applyLock(val, id);
+      } else {
+        updateInputs();
+        syncUI();
+      }
+    }
+
+    elements.lockBtn.addEventListener('click', () => {
+      state.isLocked = !state.isLocked;
+      elements.lockBtn.classList.toggle('active', state.isLocked);
+      elements.lockBtn.innerHTML = state.isLocked ? 
+        `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg> Locked` : 
+        `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg> Lock 60-30-10`;
+      
+      if (state.isLocked) {
+        applyLock(state.colors.accent, 'hex10');
+      }
+    });
+
+    [elements.hex60, elements.hex30, elements.hex10, elements.picker60, elements.picker30, elements.picker10].forEach(el => {
+      el.addEventListener('input', handleColorChange);
+    });
+
+    // Initialize UI
+    syncUI();
+
+  </script>
+</body>
+</html>

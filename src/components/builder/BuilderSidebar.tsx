@@ -788,8 +788,8 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                     <button
                         onClick={() => setShowSettingsMenu(!showSettingsMenu)}
                         className={cn(
-                            "p-1.5 border border-white/10 rounded transition-all hover:bg-foreground hover:text-background",
-                            showSettingsMenu ? "bg-foreground text-background" : "bg-background text-foreground"
+                            "p-1.5 rounded transition-all hover:bg-foreground hover:text-background",
+                            showSettingsMenu ? "bg-foreground text-background" : "bg-background text-foreground text-muted-foreground"
                         )}
                         title="File Options"
                     >
