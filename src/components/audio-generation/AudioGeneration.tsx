@@ -69,9 +69,7 @@ const MOCK_MUSIC = [
 // ─── TTS Model Options ─────────────────────
 const TTS_MODELS = [
   { id: "eleven_multilingual_v2", label: "Multilingual v2", tag: "V2", desc: "Most expressive, 29 languages" },
-  { id: "eleven_flash_v2_5", label: "Flash v2.5", tag: "⚡", desc: "Ultra-low latency, 32 languages" },
-  { id: "eleven_monolingual_v1", label: "English v1", tag: "V1", desc: "English only, classic model" },
-]
+  { id: "eleven_flash_v2_5", label: "Flash v2.5", tag: "⚡", desc: "Ultra-low latency, 32 languages" }]
 
 // ─── SFX Duration Options ──────────────────
 const SFX_DURATION_OPTIONS = [

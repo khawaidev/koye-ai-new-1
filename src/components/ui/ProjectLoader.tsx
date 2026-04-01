@@ -2,8 +2,8 @@ import "./ProjectLoader.css"
 
 export function ProjectLoader() {
   return (
-    <div className="fixed inset-0 bg-black flex items-center justify-center z-[9999]">
-      <div className="loader-wrapper">
+    <div className="fixed inset-0 bg-background text-foreground flex items-center justify-center z-[9999]">
+      <div className="loader-wrapper text-foreground">
         <span className="loader-letter">L</span>
         <span className="loader-letter">o</span>
         <span className="loader-letter">a</span>
