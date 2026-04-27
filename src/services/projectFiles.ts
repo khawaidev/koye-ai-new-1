@@ -12,7 +12,7 @@
  */
 
 import { deleteProjectFileDirectly, loadProjectFiles, loadProjectSettingsFile, saveProjectFile, saveProjectFiles } from "./supabase"
-import { isBinaryAsset, isR2Configured, uploadAssetToR2, deleteAssetFromR2 } from "./r2Storage"
+import { isBinaryAsset, isR2Configured, uploadAssetToR2, deleteAssetFromR2, parseR2Url } from "./r2Storage"
 
 // Keep the type export for backward compatibility (Dashboard still imports it)
 export interface GitHubConnectionInput {
@@ -28,10 +28,41 @@ export interface ProjectFilesData {
   projectName: string
 }
 
+function isLocalDevHost(): boolean {
+  return typeof window !== "undefined" && window.location.hostname === "localhost"
+}
+
+async function fetchCodeFileFromR2(
+  originalUrl: string,
+  parsed: { userId: string; r2Key: string }
+): Promise<string | null> {
+  const workerUrl = import.meta.env.VITE_R2_WORKER_URL
+  const workerFetchUrl = workerUrl
+    ? `${workerUrl.replace(/\/+$/, "")}/file/${parsed.userId}/${parsed.r2Key}`
+    : null
+
+  const candidateUrls = isLocalDevHost()
+    ? [workerFetchUrl, originalUrl].filter(Boolean) as string[]
+    : [originalUrl, workerFetchUrl].filter(Boolean) as string[]
+
+  for (const candidate of candidateUrls) {
+    try {
+      const res = await fetch(candidate)
+      if (res.ok) {
+        return await res.text()
+      }
+      console.warn(`Failed to fetch code file via ${candidate}: ${res.status} ${res.statusText}`)
+    } catch (error) {
+      console.warn(`Error fetching code file via ${candidate}:`, error)
+    }
+  }
+
+  return null
+}
+
 /**
  * Save project files:
- * - Binary assets → R2 (via Worker proxy), with R2 URL stored in Supabase
- * - Code/text files → Supabase DB
+ * - Binary assets & Code files → R2 (via Worker proxy), with R2 URL stored in Supabase
  */
 export async function saveProjectFilesToStorage(
   projectId: string,
@@ -42,58 +73,118 @@ export async function saveProjectFilesToStorage(
 ): Promise<void> {
   console.log(`[saveProjectFilesToStorage] Saving ${Object.keys(files).length} files for project ${projectId}`)
 
-  const textFiles: Record<string, string> = {}
-  const binaryEntries: [string, string][] = []
+  const entriesToSave: Record<string, string> = {}
+  
+  const entries = Object.entries(files)
+  const BATCH_SIZE = 10
+  
+  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+    const chunk = entries.slice(i, i + BATCH_SIZE)
+    await Promise.all(
+      chunk.map(async ([path, content]) => {
+        const binary = isBinaryAsset(path)
+        const isAlreadyUrl = binary 
+          ? (content.startsWith('http://') || content.startsWith('https://'))
+          : (parseR2Url(content) !== null)
 
-  // Categorize files
-  for (const [path, content] of Object.entries(files)) {
-    if (isBinaryAsset(path)) {
-      binaryEntries.push([path, content])
-    } else {
-      textFiles[path] = content
-    }
+        if (isR2Configured() && !isAlreadyUrl) {
+          try {
+            let r2Path = path
+            let uploadContent: string | Blob = content
+
+            if (binary) {
+              const lastSegment = path.split('/').pop() || ''
+              const hasExtension = lastSegment.includes('.') && lastSegment.split('.').pop()!.length <= 5
+              if (!hasExtension && content.startsWith('data:')) {
+                const mimeMatch = content.match(/^data:([^;,]+)/)
+                if (mimeMatch) {
+                  const mime = mimeMatch[1]
+                  const extMap: Record<string, string> = {
+                    'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif',
+                    'image/webp': '.webp', 'image/svg+xml': '.svg', 'image/bmp': '.bmp',
+                    'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
+                    'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/ogg': '.ogg',
+                    'audio/flac': '.flac', 'audio/mp4': '.m4a', 'audio/aac': '.aac',
+                    'model/gltf-binary': '.glb', 'model/gltf+json': '.gltf',
+                    'application/pdf': '.pdf', 'application/zip': '.zip',
+                    'application/octet-stream': '.bin',
+                  }
+                  const ext = extMap[mime] || ''
+                  if (ext) {
+                    r2Path = `${path}${ext}`
+                  }
+                }
+              }
+            } else {
+              // Upload text files as Blobs to proper R2 encoding
+              uploadContent = new Blob([content], { type: 'text/plain; charset=utf-8' })
+            }
+
+            const folder = binary ? 'assets' : 'code'
+            const r2Key = `projects/${projectId}/${folder}/${r2Path}`
+            const publicUrl = await uploadAssetToR2(userId, r2Key, uploadContent)
+
+            entriesToSave[path] = publicUrl
+            return
+          } catch (error) {
+            console.error(`✗ R2 upload failed for ${path}, falling back to Supabase:`, error)
+          }
+        }
+        
+        // Fallback or already URL
+        entriesToSave[path] = content
+      })
+    )
   }
 
-  // 1. Save binary assets one-by-one (R2 involves separate uploads)
-  for (const [path, content] of binaryEntries) {
+  // Save all URLs/metadata to Supabase in one batch
+  if (Object.keys(entriesToSave).length > 0) {
     try {
-      await saveSingleProjectFile(projectId, userId, _projectName, path, content)
+      await saveProjectFiles(projectId, userId, entriesToSave)
+      console.log(`✓ Saved ${Object.keys(entriesToSave).length} files/references to Supabase`)
     } catch (error) {
-      console.warn(`[saveProjectFilesToStorage] Error saving binary file ${path}:`, error)
-    }
-  }
-
-  // 2. Save all text files in one batch (Supabase upsert)
-  if (Object.keys(textFiles).length > 0) {
-    try {
-      await saveProjectFiles(projectId, userId, textFiles)
-      console.log(`✓ Saved ${Object.keys(textFiles).length} text files to Supabase in batch`)
-    } catch (error) {
-      console.error(`✗ Batch save failed for text files:`, error)
+      console.error(`✗ Batch save failed for project files:`, error)
     }
   }
 }
 
 /**
  * Load project files:
- * - ALL files from Supabase DB (code files + R2 URL pointers for assets)
+ * - Load references from Supabase
+ * - For code files pointing to R2 URLs, fetch the text content
  */
 export async function loadProjectFilesFromStorage(
   projectId: string,
   userId: string,
   _githubConnection?: GitHubConnectionInput | null
 ): Promise<Record<string, string>> {
-  // Load ALL files from Supabase (code files + R2 URL references for assets)
+  // Load ALL files from Supabase (references)
   const supabaseFiles = await loadProjectFiles(projectId, userId)
-  console.log(`Loaded ${Object.keys(supabaseFiles).length} files from storage`)
+  
+  // Fetch text contents from R2
+  const fetchPromises = Object.entries(supabaseFiles).map(async ([path, content]) => {
+    const r2Parsed = parseR2Url(content)
+    if (!isBinaryAsset(path) && r2Parsed !== null) {
+      try {
+        const text = await fetchCodeFileFromR2(content, r2Parsed)
+        if (text !== null) {
+          supabaseFiles[path] = text
+        }
+      } catch (e) {
+        console.error(`Error fetching code file ${path} from R2:`, e)
+      }
+    }
+  })
 
+  await Promise.all(fetchPromises)
+
+  console.log(`Loaded ${Object.keys(supabaseFiles).length} files from storage`)
   return supabaseFiles
 }
 
 /**
  * Save a single project file:
- * - Binary assets → R2 primary, R2 URL saved to Supabase as reference
- * - Code/text files → Supabase DB
+ * - Assets & Code → R2 primary, R2 URL saved to Supabase as reference
  */
 export async function saveSingleProjectFile(
   projectId: string,
@@ -104,68 +195,68 @@ export async function saveSingleProjectFile(
   _githubConnection?: GitHubConnectionInput | null
 ): Promise<void> {
   const binary = isBinaryAsset(path)
-
-  // If the content is already an HTTP(S) URL (e.g. an R2 public URL loaded
-  // from Supabase after a page reload), there is no need to re-upload to R2.
-  // Just persist the URL pointer in Supabase as-is.
-  const isAlreadyUrl = content.startsWith('http://') || content.startsWith('https://')
+  const isAlreadyUrl = binary 
+    ? (content.startsWith('http://') || content.startsWith('https://'))
+    : (parseR2Url(content) !== null)
 
   console.log(`[saveSingleProjectFile] Saving ${path}, binary: ${binary}, R2: ${isR2Configured()}, alreadyUrl: ${isAlreadyUrl}`)
 
-  if (binary && isR2Configured() && !isAlreadyUrl) {
-    // ── BINARY ASSET → R2 (new upload: data URL or base64) ──
+  if (isR2Configured() && !isAlreadyUrl) {
     try {
-      // Ensure the R2 key has a file extension so the public URL is type-detectable.
-      // If the path already has one (e.g. uploads/photo.png) this is a no-op.
-      // If not, infer the extension from the data URL MIME type.
       let r2Path = path
-      const lastSegment = path.split('/').pop() || ''
-      const hasExtension = lastSegment.includes('.') && lastSegment.split('.').pop()!.length <= 5
-      if (!hasExtension && content.startsWith('data:')) {
-        const mimeMatch = content.match(/^data:([^;,]+)/)
-        if (mimeMatch) {
-          const mime = mimeMatch[1]
-          const extMap: Record<string, string> = {
-            'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif',
-            'image/webp': '.webp', 'image/svg+xml': '.svg', 'image/bmp': '.bmp',
-            'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
-            'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/ogg': '.ogg',
-            'audio/flac': '.flac', 'audio/mp4': '.m4a', 'audio/aac': '.aac',
-            'model/gltf-binary': '.glb', 'model/gltf+json': '.gltf',
-            'application/pdf': '.pdf', 'application/zip': '.zip',
-            'application/octet-stream': '.bin',
-          }
-          const ext = extMap[mime] || ''
-          if (ext) {
-            r2Path = `${path}${ext}`
-            console.log(`[saveSingleProjectFile] Appended extension: ${path} → ${r2Path}`)
+      let uploadContent: string | Blob = content
+
+      if (binary) {
+        const lastSegment = path.split('/').pop() || ''
+        const hasExtension = lastSegment.includes('.') && lastSegment.split('.').pop()!.length <= 5
+        if (!hasExtension && content.startsWith('data:')) {
+          const mimeMatch = content.match(/^data:([^;,]+)/)
+          if (mimeMatch) {
+            const mime = mimeMatch[1]
+            const extMap: Record<string, string> = {
+              'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif',
+              'image/webp': '.webp', 'image/svg+xml': '.svg', 'image/bmp': '.bmp',
+              'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
+              'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/ogg': '.ogg',
+              'audio/flac': '.flac', 'audio/mp4': '.m4a', 'audio/aac': '.aac',
+              'model/gltf-binary': '.glb', 'model/gltf+json': '.gltf',
+              'application/pdf': '.pdf', 'application/zip': '.zip',
+              'application/octet-stream': '.bin',
+            }
+            const ext = extMap[mime] || ''
+            if (ext) {
+              r2Path = `${path}${ext}`
+              console.log(`[saveSingleProjectFile] Appended extension: ${path} → ${r2Path}`)
+            }
           }
         }
+      } else {
+        // Cloudflare Worker occasionally rejects completely empty bodies, so put a single space if empty
+        const textContent = content === '' ? ' ' : content;
+        uploadContent = new Blob([textContent], { type: 'text/plain; charset=utf-8' })
       }
 
-      const r2Key = `projects/${projectId}/assets/${r2Path}`
-      const publicUrl = await uploadAssetToR2(userId, r2Key, content)
+      const folder = binary ? 'assets' : 'code'
+      const r2Key = `projects/${projectId}/${folder}/${r2Path}`
+      const publicUrl = await uploadAssetToR2(userId, r2Key, uploadContent)
 
       // Store the R2 public URL in Supabase as reference pointer
       await saveProjectFile(projectId, userId, path, publicUrl)
-      console.log(`✓ Saved ${path} to R2, URL stored in Supabase`)
+      console.log(`✓ Saved ${path} to R2 (${folder}), URL stored in Supabase`)
     } catch (error) {
-      console.error(`✗ R2 upload failed for ${path}, falling back to Supabase:`, error)
-      // Fallback: save binary data directly to Supabase
-      await saveProjectFile(projectId, userId, path, content)
-      console.log(`✓ Saved ${path} to Supabase (R2 fallback)`)
+      console.error(`✗ R2 upload failed for ${path}:`, error)
+      throw error // Explicitly fail, DO NOT fallback to Supabase DB for file contents
     }
   } else {
-    // ── CODE / TEXT FILE or already-uploaded asset URL → SUPABASE DB ──
+    // If it's ALREADY a URL or if R2 is strangely not configured at all (unlikely)
     await saveProjectFile(projectId, userId, path, content)
-    console.log(`✓ Saved ${path} to Supabase DB`)
+    console.log(`✓ Saved ${path} to Supabase DB (Already a URL or R2 disconnected)`)
   }
 }
 
 /**
  * Delete a single project file:
- * - Binary assets: delete from R2 + Supabase reference
- * - Code files: delete from Supabase
+ * - Binary & Code: delete from R2 + delete Supabase reference
  */
 export async function deleteProjectFile(
   projectId: string,
@@ -173,14 +264,13 @@ export async function deleteProjectFile(
   path: string,
   _githubConnection?: GitHubConnectionInput | null
 ): Promise<void> {
-  const binary = isBinaryAsset(path)
-
-  if (binary && isR2Configured()) {
-    // Delete from R2
+  if (isR2Configured()) {
     try {
-      const r2Key = `projects/${projectId}/assets/${path}`
+      const binary = isBinaryAsset(path)
+      const folder = binary ? 'assets' : 'code'
+      const r2Key = `projects/${projectId}/${folder}/${path}`
       await deleteAssetFromR2(userId, r2Key)
-      console.log(`✓ Deleted ${path} from R2`)
+      console.log(`✓ Deleted ${path} from R2 (${folder})`)
     } catch (error) {
       console.warn(`⚠ Failed to delete ${path} from R2:`, error)
     }

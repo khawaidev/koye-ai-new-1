@@ -158,12 +158,27 @@ export async function generateImageWithRunway(
   options?: {
     model?: RunwayImageModel;
     ratio?: RunwayRatio;
+    referenceImages?: Array<{
+      base64: string
+      mimeType?: string
+      tag?: string
+    }>
   }
 ): Promise<string> {
-  const body = {
+  const body: any = {
     model: options?.model || "gen4_image_turbo",
     promptText,
     ratio: options?.ratio || "1024:1024",
+  }
+
+  if (options?.referenceImages?.length) {
+    const refs = options.referenceImages.slice(0, 3).map((ref, index) => ({
+      uri: `data:${ref.mimeType || "image/png"};base64,${ref.base64}`,
+      tag: ref.tag || `ref${index + 1}`,
+    }))
+    body.referenceImages = refs
+    const tagPromptPrefix = refs.map((ref: { tag: string }) => `@${ref.tag}`).join(" ")
+    body.promptText = `${tagPromptPrefix} ${promptText}`.trim()
   }
 
   console.log("🚀 RunwayML text-to-image — creating task…")
@@ -208,6 +223,11 @@ export async function editImageWithRunway(
   options?: {
     model?: RunwayImageModel;
     ratio?: string;
+    additionalReferenceImages?: Array<{
+      base64: string
+      mimeType?: string
+      tag?: string
+    }>
   }
 ): Promise<string> {
   // Build the request body
@@ -218,17 +238,29 @@ export async function editImageWithRunway(
   }
 
   // If a source image is provided, include it as a reference image
-  if (imageBase64) {
-    const dataUri = `data:${imageMimeType};base64,${imageBase64}`
-    body.referenceImages = [
-      {
-        uri: dataUri,
-        useType: "subject",
-      },
-    ]
+  const referenceImages: Array<{ uri: string; tag: string }> = []
 
-    // Enhance the prompt to reference the input image
-    body.promptText = `@subject ${prompt}`
+  if (imageBase64) {
+    referenceImages.push({
+      uri: `data:${imageMimeType};base64,${imageBase64}`,
+      tag: "source",
+    })
+  }
+
+  if (options?.additionalReferenceImages?.length) {
+    options.additionalReferenceImages.slice(0, 2).forEach((ref, index) => {
+      const tag = ref.tag || `ref${index + 1}`
+      referenceImages.push({
+        uri: `data:${ref.mimeType || "image/png"};base64,${ref.base64}`,
+        tag,
+      })
+    })
+  }
+
+  if (referenceImages.length > 0) {
+    body.referenceImages = referenceImages
+    const tagPromptPrefix = referenceImages.map((ref) => `@${ref.tag}`).join(" ")
+    body.promptText = `${tagPromptPrefix} ${prompt}`.trim()
   }
 
   console.log("🖌️ RunwayML image-edit — creating task…")
@@ -302,6 +334,52 @@ export async function generateVideoWithRunway(
 
   const { id: taskId } = await createRes.json()
   console.log(`✅ RunwayML video task created: ${taskId}`)
+
+  const result = await pollTask(taskId)
+
+  if (result.output && result.output.length > 0) {
+    return result.output[0]
+  }
+  throw new Error("RunwayML returned no output video")
+}
+
+/**
+ * Edit a video using video-to-video with RunwayML gen4_aleph.
+ * @param videoUri - Public URL of the source video
+ * @param promptText - Description of the desired changes
+ * @param options - Optional seed
+ * @returns URL of the edited video
+ */
+export async function editVideoWithRunway(
+  videoUri: string,
+  promptText: string,
+  options?: {
+    seed?: number
+  }
+): Promise<string> {
+  const body: any = {
+    model: "gen4_aleph",
+    videoUri,
+    promptText,
+  }
+
+  if (options?.seed !== undefined) {
+    body.seed = options.seed
+  }
+
+  console.log("🎬 RunwayML video-to-video — creating task…")
+  const createRes = await runwayFetch("/video_to_video", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+
+  if (!createRes.ok) {
+    const errData = await createRes.json().catch(() => ({}))
+    throw new Error(`RunwayML video-to-video error: ${createRes.status} — ${JSON.stringify(errData)}`)
+  }
+
+  const { id: taskId } = await createRes.json()
+  console.log(`✅ RunwayML video-to-video task created: ${taskId}`)
 
   const result = await pollTask(taskId)
 

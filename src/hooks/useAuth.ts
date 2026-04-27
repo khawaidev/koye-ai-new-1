@@ -7,6 +7,7 @@ import type { User } from "@supabase/supabase-js"
  */
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null)
+  const [session, setSession] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -17,6 +18,7 @@ export function useAuth() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
+      setSession(session)
       setLoading(false)
     })
 
@@ -27,11 +29,13 @@ export function useAuth() {
 
   const checkUser = async () => {
     try {
-      const currentUser = await getCurrentUser()
-      setUser(currentUser)
+      const { data: { session: currentSession } } = await supabase.auth.getSession()
+      setSession(currentSession)
+      setUser(currentSession?.user ?? null)
     } catch (error) {
       console.error("Error checking user:", error)
       setUser(null)
+      setSession(null)
     } finally {
       setLoading(false)
     }
@@ -39,6 +43,7 @@ export function useAuth() {
 
   return {
     user,
+    session,
     loading,
     isAuthenticated: !!user,
     refresh: checkUser,

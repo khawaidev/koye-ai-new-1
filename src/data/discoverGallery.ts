@@ -300,14 +300,14 @@ export const DISCOVER_GALLERY: DiscoverItem[] = [
 
   {
     id: "1",
-    url: "images/discover/noble-men1.jpg",
+    url: "/images/discover/noble-men1.jpg",
     name: "Example Character",
     tags: ["default", "character", "noblemen", "fantasy", "european", "human"],
     type: "image",
   },
   {
     id: "2",
-    url: "images/discover/archer-eu-medival1.jpg",
+    url: "/images/discover/archer-eu-medival1.jpg",
     name: "Example Character",
     tags: ["default", "character", "archer", "medival", "european", "human"],
     type: "image",
@@ -315,7 +315,7 @@ export const DISCOVER_GALLERY: DiscoverItem[] = [
 
   {
     id: "3",
-    url: "images/discover/archer-as1.jpg",
+    url: "/images/discover/archer-as1.jpg",
     name: "Example Character",
     tags: ["default", "character", "archer", "medival", "asian", "human"],
     type: "image",
@@ -323,7 +323,7 @@ export const DISCOVER_GALLERY: DiscoverItem[] = [
 
   {
     id: "4",
-    url: "images/discover/wizard-eu-med1.jpg",
+    url: "/images/discover/wizard-eu-med1.jpg",
     name: "Example Character",
     tags: ["default", "character", "wizard", "medival", "european", "human"],
     type: "image",
@@ -331,56 +331,56 @@ export const DISCOVER_GALLERY: DiscoverItem[] = [
 
   {
     id: "5",
-    url: "images/discover/knight-med-dark-demon.jpg",
+    url: "/images/discover/knight-med-dark-demon.jpg",
     name: "Example Character",
     tags: ["default", "character", "knight", "medival", "european", "demon"],
     type: "image",
   },
   {
     id: "6",
-    url: "images/discover/knight-med-as.jpg",
+    url: "/images/discover/knight-med-as.jpg",
     name: "Example Character",
     tags: ["default", "character", "knight", "medival", "asian", "human"],
     type: "image",
   },
   {
     id: "7",
-    url: "images/discover/bone-spear1.jpg",
+    url: "/images/discover/bone-spear1.jpg",
     name: "Example Character",
     tags: ["default", "character", "weapon", "olden", "tribal", "spear"],
     type: "image",
   },
   {
     id: "8",
-    url: "images/discover/ronin1.jpg",
+    url: "/images/discover/ronin1.jpg",
     name: "Example Character",
     tags: ["default", "character", "ronin", "medival", "asian", "human"],
     type: "image",
   },
   {
     id: "9",
-    url: "images/discover/beat-tiger1.jpg",
+    url: "/images/discover/beat-tiger1.jpg",
     name: "Example Character",
     tags: ["default", "character", "animals", "beast", "medival", "asian", "tiger"],
     type: "image",
   },
   {
     id: "10",
-    url: "images/discover/swordsmen-as-med1.jpg",
+    url: "/images/discover/swordsmen-as-med1.jpg",
     name: "Example Character",
     tags: ["default", "character", "knight", "medival", "asian", "demon"],
     type: "image",
   },
   {
     id: "11",
-    url: "images/discover/knight-med-eu2.jpg",
+    url: "/images/discover/knight-med-eu2.jpg",
     name: "Example Character",
     tags: ["default", "character", "knight", "medival", "european", "human"],
     type: "image",
   },
   {
     id: "12",
-    url: "images/discover/creature-demon-knight1.jpg",
+    url: "/images/discover/creature-demon-knight1.jpg",
     name: "Example Character",
     tags: ["default", "character", "knight", "medival", "demon", "creature"],
     type: "image",

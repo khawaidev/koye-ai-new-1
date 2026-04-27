@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import appIcon from "../../assets/icon.jpg"
+import appIcon from "../../assets/icon2.png"
 import { cn } from "../../lib/utils"
 
 interface VideoGenerationLoaderProps {

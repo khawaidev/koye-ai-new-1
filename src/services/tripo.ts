@@ -1,4 +1,30 @@
-import type { RiggingTask, TaskStatus } from "./meshy";
+export type TaskStatus = "PENDING" | "IN_PROGRESS" | "SUCCEEDED" | "FAILED" | "CANCELED"
+
+export interface RiggingTask {
+  id: string
+  status: TaskStatus
+  progress: number
+  created_at: number
+  started_at: number
+  finished_at: number
+  expires_at: number
+  task_error: {
+    message: string
+  }
+  result?: {
+    rigged_character_fbx_url?: string
+    rigged_character_glb_url?: string
+    basic_animations?: {
+      walking_glb_url?: string
+      walking_fbx_url?: string
+      walking_armature_glb_url?: string
+      running_glb_url?: string
+      running_fbx_url?: string
+      running_armature_glb_url?: string
+    }
+  }
+  preceding_tasks: number
+}
 
 const TRIPO_API_BASE = "https://api.tripo3d.ai/v2/openapi";
 
@@ -262,4 +288,171 @@ export async function getRiggingTask(taskId: string): Promise<RiggingTask> {
         }
     }
     throw lastError || new Error("All Tripo API keys failed");
+}
+
+// ==================== Text-to-3D Model Generation ====================
+
+export type TripoModelVersion =
+    | "P1-20260311"
+    | "Turbo-v1.0-20250506"
+    | "v3.1-20260211"
+    | "v3.0-20250812"
+    | "v2.5-20250123"
+    | "v2.0-20240919"
+    | "v1.4-20240625"
+
+export type TripoTextureQuality = "standard" | "detailed"
+export type TripoGeometryQuality = "standard" | "detailed"
+
+export interface TextTo3DOptions {
+    model_version?: TripoModelVersion
+    negative_prompt?: string
+    image_seed?: number
+    model_seed?: number
+    texture_seed?: number
+    face_limit?: number
+    texture?: boolean
+    pbr?: boolean
+    texture_quality?: TripoTextureQuality
+    auto_size?: boolean
+    quad?: boolean
+    smart_low_poly?: boolean
+    geometry_quality?: TripoGeometryQuality
+}
+
+/**
+ * Create a text-to-3D model task using Tripo AI
+ * Returns the task_id to poll for results
+ */
+export async function createTextTo3DTask(prompt: string, options?: TextTo3DOptions): Promise<string> {
+    const keys = getAllTripoApiKeys();
+    let lastError: any = null;
+
+    if (!prompt || prompt.trim().length === 0) {
+        throw new Error("Prompt is required for text-to-3D generation");
+    }
+
+    for (let i = 0; i < keys.length; i++) {
+        const apiKey = keys[i];
+        try {
+            console.log(`[Tripo Text-to-3D] Creating task with key ${i + 1}`);
+
+            const payload: Record<string, any> = {
+                type: "text_to_model",
+                prompt: prompt.trim(),
+                model_version: options?.model_version || "v2.5-20250123",
+            };
+
+            // Add optional parameters (only for model_version >= v2.0)
+            if (options?.negative_prompt) payload.negative_prompt = options.negative_prompt;
+            if (options?.image_seed !== undefined) payload.image_seed = options.image_seed;
+            if (options?.model_seed !== undefined) payload.model_seed = options.model_seed;
+            if (options?.texture_seed !== undefined) payload.texture_seed = options.texture_seed;
+            if (options?.face_limit !== undefined) payload.face_limit = options.face_limit;
+            if (options?.texture !== undefined) payload.texture = options.texture;
+            if (options?.pbr !== undefined) payload.pbr = options.pbr;
+            if (options?.texture_quality) payload.texture_quality = options.texture_quality;
+            if (options?.auto_size !== undefined) payload.auto_size = options.auto_size;
+            if (options?.quad !== undefined) payload.quad = options.quad;
+            if (options?.smart_low_poly !== undefined) payload.smart_low_poly = options.smart_low_poly;
+            if (options?.geometry_quality) payload.geometry_quality = options.geometry_quality;
+
+            console.log("[Tripo Text-to-3D] Payload:", JSON.stringify(payload));
+
+            const response = await fetch(`${TRIPO_API_BASE}/task`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`HTTP ${response.status}: ${errorText}`);
+            }
+
+            const data = await response.json();
+            if (data.code !== 0) {
+                throw new Error(`Tripo Error ${data.code}: ${data.message || "Unknown"}`);
+            }
+
+            const taskId = data.data.task_id;
+            console.log(`[Tripo Text-to-3D] ✅ Task created: ${taskId}`);
+            return taskId;
+
+        } catch (error) {
+            lastError = error;
+            console.warn(`[Tripo Text-to-3D] Key ${i + 1} failed:`, error);
+            if (!shouldTryNextKey(error)) throw error;
+        }
+    }
+    throw lastError || new Error("All Tripo API keys failed for text-to-3D");
+}
+
+/**
+ * Poll a Tripo task for its result.
+ * Returns a normalized result compatible with the component's GeneratedModel interface.
+ */
+export interface TripoTaskResult {
+    status: "pending" | "processing" | "completed" | "failed"
+    progress?: number
+    result?: {
+        modelUrl: string
+        format: string
+    }
+    error?: string
+    taskId: string
+}
+
+export async function getTripoTaskResult(taskId: string): Promise<TripoTaskResult> {
+    const keys = getAllTripoApiKeys();
+    let lastError: any = null;
+
+    for (let i = 0; i < keys.length; i++) {
+        const apiKey = keys[i];
+        try {
+            const response = await fetch(`${TRIPO_API_BASE}/task/${taskId}`, {
+                method: "GET",
+                headers: {
+                    "Authorization": `Bearer ${apiKey}`,
+                },
+            });
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const data = await response.json();
+            if (data.code !== 0) throw new Error(`Tripo Error ${data.code}`);
+
+            const taskData = data.data;
+            let status: TripoTaskResult["status"] = "pending";
+            let modelUrl = "";
+
+            if (taskData.status === "running" || taskData.status === "queued") {
+                status = "processing";
+            } else if (taskData.status === "success") {
+                status = "completed";
+                modelUrl = taskData.output?.model?.url || taskData.result?.model?.url || "";
+            } else if (taskData.status === "failed") {
+                status = "failed";
+            }
+
+            return {
+                status,
+                progress: taskData.progress || 0,
+                result: status === "completed" && modelUrl ? {
+                    modelUrl,
+                    format: "glb",
+                } : undefined,
+                error: taskData.error?.message || (status === "failed" ? "Task failed" : undefined),
+                taskId,
+            };
+
+        } catch (error) {
+            lastError = error;
+            if (!shouldTryNextKey(error)) throw error;
+        }
+    }
+    throw lastError || new Error("All Tripo API keys failed for getTripoTaskResult");
 }

@@ -7,6 +7,21 @@ import { isSettingsFile } from "../../utils/projectSettings"
 import { buildFileTree, type FileNode } from "../sidebar/FileSystemSidebar"
 import { Button } from "../ui/button"
 import type { UploadOverlayState } from "../../pages/Builder"
+import {
+  FileItem,
+  FolderItem,
+  FolderTrigger,
+  FolderContent,
+  Files,
+  SubFiles,
+} from "../animate-ui/components/radix/files"
+
+import { 
+    SiJavascript, SiTypescript, SiHtml5, SiCss, SiJson, SiPython, 
+    SiCplusplus, SiC, SiMarkdown, SiGit, SiGodotengine 
+} from "react-icons/si"
+import { VscFile } from "react-icons/vsc"
+import { TbBrandCSharp } from "react-icons/tb"
 
 interface BuilderSidebarProps {
     selectedFile: string | null
@@ -33,6 +48,7 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
     const [showRenameDialog, setShowRenameDialog] = useState(false)
     const [renameValue, setRenameValue] = useState("")
     const [clipboard, setClipboard] = useState<{ path: string; content: string; operation: "copy" | "cut" } | null>(null)
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
     const settingsMenuRef = useRef<HTMLDivElement>(null)
 
     // Drag and drop state
@@ -452,17 +468,17 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
         onFileCreated?.()
     }
 
-    const handleDelete = async () => {
+    const handleDelete = () => {
+        if (!selectedFile || isSettingsFile(selectedFile)) return
+        setShowDeleteConfirm(true)
+        setShowSettingsMenu(false)
+    }
+
+    const confirmDelete = async () => {
         if (!selectedFile) return
-
-        // Don't allow deleting settings file
-        if (isSettingsFile(selectedFile)) return
-
+        
         // Check if selected item is a folder
         const isFolder = !generatedFiles[selectedFile] && Object.keys(generatedFiles).some(p => p.startsWith(selectedFile + '/'))
-        const label = isFolder ? `folder "${selectedFile}" and all its contents` : `"${selectedFile}"`
-
-        if (!confirm(`Are you sure you want to delete ${label}?`)) return
 
         const updatedFiles = { ...generatedFiles }
 
@@ -493,10 +509,8 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
         }
 
         setGeneratedFiles(updatedFiles)
-
-        // Clear selection immediately
         onSelectFile("", "file")
-        setShowSettingsMenu(false)
+        setShowDeleteConfirm(false)
         onFileCreated?.()
     }
 
@@ -659,82 +673,73 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
         setShowSettingsMenu(false)
     }
 
-    const getFileIcon = (fileType?: FileNode["fileType"], isSelected?: boolean) => {
+    const getFileIconComponent = (fileName: string, fileType?: FileNode["fileType"]) => {
+        const ext = fileName.split('.').pop()?.toLowerCase() || ''
+        
+        const withColor = (IconComp: any, colorClass: string) => {
+            return (props: any) => <IconComp {...props} className={cn(props.className, colorClass)} />
+        }
+
+        switch (ext) {
+            case 'js':
+            case 'jsx': return withColor(SiJavascript, "text-yellow-400")
+            case 'ts':
+            case 'tsx': return withColor(SiTypescript, "text-blue-400")
+            case 'html': return withColor(SiHtml5, "text-orange-500")
+            case 'css': return withColor(SiCss, "text-blue-500")
+            case 'json': return withColor(SiJson, "text-green-500")
+            case 'py': return withColor(SiPython, "text-blue-500")
+            case 'cs': return withColor(TbBrandCSharp, "text-purple-500")
+            case 'cpp': return withColor(SiCplusplus, "text-blue-600")
+            case 'c': return withColor(SiC, "text-blue-600")
+            case 'md': return SiMarkdown
+            case 'gd': return withColor(SiGodotengine, "text-blue-400")
+            case 'txt': return VscFile
+            case 'gitignore': return SiGit
+        }
+
         switch (fileType) {
-            case "image": return <ImageIcon className={isSelected ? "h-4 w-4 text-background" : "h-4 w-4 text-blue-600"} />
-            case "model": return <Box className={isSelected ? "h-4 w-4 text-background" : "h-4 w-4 text-orange-600"} />
-            case "video": return <Video className={isSelected ? "h-4 w-4 text-background" : "h-4 w-4 text-purple-600"} />
-            case "audio": return <Music className={isSelected ? "h-4 w-4 text-background" : "h-4 w-4 text-green-600"} />
-            case "code": return <Code className={isSelected ? "h-4 w-4 text-background" : "h-4 w-4 text-yellow-600"} />
-            default: return <File className={isSelected ? "h-4 w-4 text-background" : "h-4 w-4 text-foreground"} />
+            case "image": return withColor(ImageIcon, "text-blue-600")
+            case "model": return withColor(Box, "text-orange-600")
+            case "video": return withColor(Video, "text-purple-600")
+            case "audio": return withColor(Music, "text-green-600")
+            case "code": return withColor(Code, "text-yellow-600")
+            default: return File
         }
     }
 
     const renderNode = (node: FileNode, level: number = 0) => {
-        const isExpanded = expandedFolders.has(node.path)
         const isSelected = selectedFile === node.path
 
         if (node.type === "folder") {
             return (
-                <div key={node.path}>
-                    <div
-                        className={cn(
-                            "flex items-center gap-1.5 px-2 py-1.5 cursor-pointer hover:bg-muted font-mono text-xs rounded transition-colors",
-                            isSelected && "bg-foreground text-background hover:bg-foreground/90",
-                            level > 0 && "ml-4"
-                        )}
-                        style={{ paddingLeft: `${8 + level * 16}px` }}
-                        onClick={() => {
-                            toggleFolder(node.path)
-                            onSelectFile(node.path, "file")
-                        }}
+                <FolderItem key={node.path} value={node.path}>
+                    <FolderTrigger 
+                        className={cn("font-medium", isSelected && "font-bold text-foreground underline underline-offset-4 decoration-foreground")}
+                        onClick={() => onSelectFile(node.path, "file")}
                     >
-                        {isExpanded ? (
-                            <ChevronDown className={cn("h-3 w-3 shrink-0", isSelected ? "text-background" : "text-foreground")} />
-                        ) : (
-                            <ChevronRight className={cn("h-3 w-3 shrink-0", isSelected ? "text-background" : "text-foreground")} />
-                        )}
-                        {isExpanded ? (
-                            <FolderOpen className={cn("h-4 w-4 shrink-0", isSelected ? "text-background" : "text-foreground")} />
-                        ) : (
-                            <Folder className={cn("h-4 w-4 shrink-0", isSelected ? "text-background" : "text-foreground")} />
-                        )}
-                        <span className={cn("font-medium truncate", isSelected ? "text-background font-bold" : "text-foreground")} title={node.name}>
-                            {formatName(node.name, false)}
-                        </span>
-                    </div>
-                    {isExpanded && node.children && (
-                        <div>
-                            {node.children.map((child) => renderNode(child, level + 1))}
-                        </div>
+                        {formatName(node.name, false)}
+                    </FolderTrigger>
+                    {node.children && node.children.length > 0 && (
+                        <FolderContent>
+                            <SubFiles>
+                                {node.children.map((child) => renderNode(child, level + 1))}
+                            </SubFiles>
+                        </FolderContent>
                     )}
-                </div>
+                </FolderItem>
             )
         } else {
             return (
-                <div
+                <FileItem 
                     key={node.path}
-                    className={cn(
-                        "flex items-center gap-1.5 px-2 py-1.5 cursor-pointer hover:bg-muted font-mono text-xs rounded transition-colors",
-                        isSelected && "bg-foreground text-background hover:bg-foreground/90",
-                        level > 0 && "ml-4"
-                    )}
-                    style={{ paddingLeft: `${8 + level * 16}px` }}
+                    value={node.path}
+                    icon={getFileIconComponent(node.name, node.fileType)}
+                    className={cn("font-medium", isSelected && "font-bold text-foreground underline underline-offset-4 decoration-foreground")}
                     onClick={() => onSelectFile(node.path, "asset", node.data)}
                 >
-                    <div className="shrink-0">
-                        {getFileIcon(node.fileType, isSelected)}
-                    </div>
-                    <span
-                        className={cn(
-                            "truncate font-medium",
-                            isSelected ? "text-background font-bold" : "text-foreground"
-                        )}
-                        title={node.name}
-                    >
-                        {formatName(node.name, true)}
-                    </span>
-                </div>
+                    {formatName(node.name, true)}
+                </FileItem>
             )
         }
     }
@@ -890,7 +895,13 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                     </div>
                 ) : (
                     <div className="px-2">
-                        {fileTree.map((node) => renderNode(node))}
+                        <Files 
+                            className="w-full font-mono text-xs" 
+                            open={Array.from(expandedFolders)}
+                            onOpenChange={(newOpen) => setExpandedFolders(new Set(newOpen))}
+                        >
+                            {fileTree.map((node) => renderNode(node))}
+                        </Files>
                     </div>
                 )}
             </div>
@@ -1111,6 +1122,57 @@ export function BuilderSidebar({ selectedFile, onSelectFile, onFileCreated, proj
                                         setRenameValue("")
                                     }}
                                     className="flex-1 border-2 border-black bg-white text-black hover:bg-black/10 font-mono text-xs font-bold shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] transition-all"
+                                >
+                                    $ cancel
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Confirmation Dialog */}
+            {showDeleteConfirm && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div className="w-full max-w-sm bg-white border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] font-mono">
+                        <div className="border-b-2 border-black px-4 py-2 flex items-center justify-between bg-red-50">
+                            <span className="text-red-600 font-mono text-sm font-bold uppercase tracking-tight">
+                                Danger Zone
+                            </span>
+                            <button
+                                onClick={() => setShowDeleteConfirm(false)}
+                                className="text-black hover:bg-black/10 p-1 rounded transition-colors"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+                        <div className="p-6 space-y-6">
+                            <div className="flex flex-col items-center text-center gap-4">
+                                <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center border-2 border-black">
+                                    <Trash2 className="h-6 w-6 text-red-600" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-black mb-2">
+                                        Delete {selectedFile?.split('/').pop()}?
+                                    </h3>
+                                    <p className="text-[11px] text-black/60 leading-relaxed">
+                                        This action is permanent and cannot be undone. 
+                                        Are you absolutely sure?
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <div className="flex flex-col gap-2">
+                                <Button
+                                    onClick={confirmDelete}
+                                    className="w-full bg-red-600 text-white hover:bg-red-700 font-mono text-xs font-bold border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+                                >
+                                    $ confirm_delete
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setShowDeleteConfirm(false)}
+                                    className="w-full border-2 border-black bg-white text-black hover:bg-black/5 font-mono text-xs font-bold shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
                                 >
                                     $ cancel
                                 </Button>

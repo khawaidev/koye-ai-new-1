@@ -87,8 +87,14 @@ export interface Message {
   autoWebSearchHandled?: boolean // Flag to prevent re-triggering web search
   model3dUrl?: string // URL for 3d model output
   isGeneratingImage?: boolean // Flag to show image generation loading state
+  isGeneratingVideo?: boolean // Flag to show video generation loading state
+  isGeneratingAudio?: boolean // Flag to show audio generation loading state
+  isGenerating3DModel?: boolean // Flag to show 3D model generation loading state
+  audioUrl?: string // URL for generated audio
+  generationError?: string // Optional error message for any generation failure
   webSearchResults?: WebSearchResult // Web search results from SearchAPI
   isWebSearching?: boolean // Flag to show web search loading state
+  fileOperations?: Array<{ type: 'create' | 'edit' | 'delete' | 'edit-image', path: string, content?: string }>
   timestamp: Date
 }
 

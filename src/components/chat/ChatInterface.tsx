@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from "framer-motion"
 import { Folder, Link2, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import appIconLight from "../../assets/icon.jpg"
-import appIconDark from "../../assets/icon.png"
+import appIcon from "../../assets/icon2.png"
 import { useAuth } from "../../hooks/useAuth"
+import { cn } from "../../lib/utils"
 import { uuidv4 } from "../../lib/uuid"
 import { generateChatTitle } from "../../services/chatTitleGenerator"
 import { getGameDevSystemPrompt } from "../../services/gameDevPrompt"
@@ -12,6 +12,13 @@ import { routeMessageStream, type ModelSwitchInfo } from "../../services/orchest
 import { webSearch, formatSearchResultsForContext } from "../../services/searchapi"
 import { buildProjectHistoryPrompt, recordSessionToProjectContext } from "../../services/projectContext"
 import { loadProjectFilesFromStorage, saveSingleProjectFile } from "../../services/projectFiles"
+import { parseR2Url } from "../../services/r2Storage"
+import { parseToolCalls, hasToolCalls, extractToolHints, stripToolMarkersForDisplay } from "../../services/agentToolParser"
+import { executeToolInSandbox, applyApprovedChanges, applySandboxChangesToFileMap } from "../../services/agentToolExecutor"
+import { useAgentToolStore } from "../../store/useAgentToolStore"
+import { isFileModifyingTool, isReadOnlyTool } from "../../types/agentTools"
+import type { SandboxChange } from "../../types/agentTools"
+import { ToolApprovalCard } from "./ToolApprovalCard"
 import { createProject, getProjects } from "../../services/supabase"
 import type { Message } from "../../store/useAppStore"
 import { useAppStore } from "../../store/useAppStore"
@@ -33,6 +40,7 @@ export function ChatInterface() {
   const {
     messages,
     addMessage,
+    setMessages,
     setIsGenerating,
     isGenerating,
     generatingText,
@@ -357,9 +365,59 @@ export function ChatInterface() {
   const [switchingMessage, setSwitchingMessage] = useState<string>("")
   const shouldStopRef = useRef<boolean>(false)
   const titleGeneratedRef = useRef<boolean>(false)
+  const [toolExecutionHints, setToolExecutionHints] = useState<string[]>([])
+  const pendingStreamBufferRef = useRef<string>("")
+  const renderedStreamTextRef = useRef<string>("")
+  const streamDrainTimerRef = useRef<number | null>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  const stopStreamDrain = () => {
+    if (streamDrainTimerRef.current !== null) {
+      window.clearInterval(streamDrainTimerRef.current)
+      streamDrainTimerRef.current = null
+    }
+  }
+
+  const resetStreamRenderer = () => {
+    stopStreamDrain()
+    pendingStreamBufferRef.current = ""
+    renderedStreamTextRef.current = ""
+  }
+
+  const flushStreamImmediately = (finalText?: string) => {
+    const next = typeof finalText === "string"
+      ? finalText
+      : `${renderedStreamTextRef.current}${pendingStreamBufferRef.current}`
+    renderedStreamTextRef.current = next
+    pendingStreamBufferRef.current = ""
+    setStreamingContent(next)
+  }
+
+  const startStreamDrain = () => {
+    if (streamDrainTimerRef.current !== null) return
+    streamDrainTimerRef.current = window.setInterval(() => {
+      if (shouldStopRef.current) {
+        stopStreamDrain()
+        return
+      }
+      const buf = pendingStreamBufferRef.current
+      if (!buf) return
+
+      const match = buf.match(/^(\S+\s*)/)
+      const nextPiece = match ? match[1] : buf[0]
+      pendingStreamBufferRef.current = buf.slice(nextPiece.length)
+      renderedStreamTextRef.current += nextPiece
+      setStreamingContent(renderedStreamTextRef.current)
+    }, 18)
+  }
+
+  const enqueueStreamChunk = (chunk: string) => {
+    if (!chunk) return
+    pendingStreamBufferRef.current += chunk
+    startStreamDrain()
   }
 
   // Detect image generation state
@@ -433,6 +491,8 @@ export function ChatInterface() {
     shouldStopRef.current = true
     setIsGenerating(false)
     setIsThinking(false)
+    flushStreamImmediately()
+    stopStreamDrain()
 
     // Abort any in-flight API calls (3D model generation, image generation, etc.)
     const controller = (window as any).__generationAbortController
@@ -456,6 +516,7 @@ export function ChatInterface() {
     setStreamingMessageId(null)
     setStreamingContent("")
     setThinkingText("")
+    resetStreamRenderer()
 
     // Note: The streaming loop will check shouldStopRef and break naturally
   }
@@ -520,13 +581,26 @@ export function ChatInterface() {
           assetGenType = "3d-model"
           defaultConfig.modelResolution = "1024"
           defaultConfig.includeTexture = true
-          // Try to find the source image from recent messages
+          defaultConfig.aiModel = "hitem3d" // default to image-to-3d
+
+          // Try to find the 4 views from recent messages
           const recentMsgs = useAppStore.getState().messages
           const lastImgMsg = recentMsgs.slice().reverse().find(m => m.generatedImages && m.generatedImages.length > 0)
-          if (lastImgMsg?.generatedImages?.[0]?.url) {
-            defaultConfig.sourceImage = lastImgMsg.generatedImages[0].url.includes('/')
-              ? lastImgMsg.generatedImages[0].url.split('/').pop() || "generated image"
-              : "generated image"
+          
+          if (lastImgMsg?.generatedImages?.length) {
+              const images = lastImgMsg.generatedImages
+              
+              const front = images.find(img => img.view === 'front')?.url || images[0]?.url
+              const left = images.find(img => img.view === 'left')?.url || images[1]?.url
+              const right = images.find(img => img.view === 'right')?.url || images[2]?.url
+              const back = images.find(img => img.view === 'back')?.url || images[3]?.url
+              
+              const extractName = (url?: string) => url ? (url.includes('/') ? url.split('/').pop() || url : url) : ""
+              
+              defaultConfig.sourceImage = extractName(front)
+              defaultConfig.leftImage = extractName(left)
+              defaultConfig.rightImage = extractName(right)
+              defaultConfig.backImage = extractName(back)
           }
         }
         else if (gameDevStep >= 19 && gameDevStep <= 21) assetGenType = "animation-generation"
@@ -553,6 +627,7 @@ export function ChatInterface() {
     setIsGenerating(true)
     setStreamingContent("")
     setThinkingText("")
+    resetStreamRenderer()
 
     try {
       // Convert images to base64 for Gemini
@@ -596,24 +671,55 @@ export function ChatInterface() {
 Connected Project: "${currentProject.name}" (ID: ${currentProject.id})
 
 ${projectHistory}IMPORTANT: You have FULL PERMISSION to create, edit, and delete files in this project.
-When the user asks you to add code, modify files, or create new files - DO IT automatically using the markers below.
+When the user asks you to add code, modify files, or create new files - DO IT automatically using the tool call markers below.
 Do NOT just show code snippets - actually save them to the project files.
 If there is a PROJECT HISTORY section above, use it to understand what has been done in previous chat sessions.
 Continue from where the previous sessions left off. Do NOT repeat or re-create work that was already done.
 
-FILE OPERATION MARKERS (use these to automatically save files):
-- CREATE_FILE: [CREATE_FILE: path/to/file.ext, file content here]
-- EDIT_FILE: [EDIT_FILE: path/to/file.ext, complete new file content here]
-- DELETE_FILE: [DELETE_FILE: path/to/file.ext]
-- EDIT_IMAGE: [EDIT_IMAGE: path_to_image, instructions_for_edit, preferred_model] (Models: nano-banana-edit, nano-banana-pro-edit. Example: [EDIT_IMAGE: images/hero.png, replace background with sunset, nano-banana-edit])
+PROJECT FILE/FOLDER TOOLS — ALWAYS use the structured format:
+
+STRUCTURED FORMAT (REQUIRED — most reliable):
+- [TOOL_CALL: create_file, { "path": "path/to/file.ext", "content": "..." }]
+- [TOOL_CALL: edit_file, { "path": "path/to/file.ext", "content": "..." }]
+- [TOOL_CALL: delete_file, { "path": "path/to/file.ext" }]
+- [TOOL_CALL: create_folder, { "path": "path/to/folder" }]
+- [TOOL_CALL: delete_folder, { "path": "path/to/folder" }]
+- [TOOL_CALL: rename_file, { "path": "path/to/file.ext", "newName": "new-file.ext" }]
+- [TOOL_CALL: move_file, { "path": "path/to/file.ext", "destination": "path/to/new/file.ext" }]
+- [TOOL_CALL: copy_file, { "path": "path/to/file.ext", "destination": "path/to/copy.ext" }]
+- [TOOL_CALL: get_file_contents, { "path": "path/to/file.ext" }]
+- [TOOL_CALL: list_files, { "path": "optional/folder/prefix" }]
+- [TOOL_CALL: search_codebase, { "query": "text to find", "filePattern": "optional-hint" }]
+- [TOOL_CALL: replace_code, { "path": "path/to/file.ext", "search": "old code", "replace": "new code", "replaceAll": true }]
+
+LEGACY (backward compatible) markers — only if structured format fails:
+- Create file:   [CREATE_FILE: path/to/file.ext, file content here]
+- Edit file:     [EDIT_FILE: path/to/file.ext, complete new file content here]
+- Delete file:   [DELETE_FILE: path/to/file.ext]
+- Edit image:    [EDIT_IMAGE: path_to_image, instructions_for_edit, preferred_model] (Models: nano-banana-edit, nano-banana-pro-edit)
+
+IMPORTANT: The user will be shown a preview of your changes and must approve them before they are saved.
+Changes are staged in a sandbox and visible immediately in the editor preview, but NOT committed until approved.
 
 RULES:
+0. CRITICAL UI RULE: Do NOT write tool names like "CREATE_FILE:" or "create_file" in normal chat text. Only emit tool calls using the marker formats above. Keep your human-facing text clean and natural.
 1. When user says "add code to main.js" or similar - use EDIT_FILE with the COMPLETE updated content
 2. When user says "create a new file" - use CREATE_FILE
 3. Always include the FULL file content in EDIT_FILE, not just the changes
-4. If a file was recently discussed, you can continue editing it without the user using @mention
-5. Remember which files you've created/edited in this conversation
-6. When editing images, if the user doesn't specify a model, ask them or use the default (nano-banana-edit). Always provide the full file path.
+4. PREFER replace_code over edit_file for partial edits — it only sends the search+replace text, not the entire file content. This is more reliable and less error-prone.
+5. CRITICAL: When using structured format, ALL string values in the JSON must be properly escaped. Newlines must be \\n, tabs must be \\t, quotes must be \\", and backslashes must be \\\\. Invalid JSON will cause the tool call to fail.
+6. If a file was recently discussed, you can continue editing it without the user using @mention
+7. Remember which files you've created/edited in this conversation
+8. When editing images, if the user doesn't specify a model, ask them or use the default (nano-banana-edit). Always provide the full file path.
+9. Whenever the user starts to describe their game idea, or discusses the idea, changes, theme, or assets of the game, ALWAYS automatically create or update a file named "game-context.md" in the project using CREATE_FILE or EDIT_FILE. It should contain the user's game idea refined by you through the discussions. You MUST keep this file updated as the user's game theme/idea/flow changes.
+10. If the user asks to modify/update/add details to an existing file, DO NOT stop at read-only tools (like get_file_contents/list_files/search_codebase). In the SAME response, you MUST also emit at least one file-modifying tool call (EDIT_FILE/REPLACE_CODE/etc.) that performs the requested change.
+11. Never return only a filename or only read-only tool calls for an edit request. Always include a short natural-language response plus the required file-modifying tool call(s).
+
+COMPLEXITY SELF-ASSESSMENT:
+- You are currently running as Gemini Flash — optimized for fast, lightweight coding tasks.
+- If you are CONFIDENT you can handle the user's request correctly, proceed immediately.
+- User-requested code is CRITICALLY IMPORTANT — accuracy matters more than speed.
+- For complex multi-file systems, large refactors, or deep architectural work, note: "[NEEDS_ADVANCED_MODEL]" in your response so the system can route to a more powerful model if needed.
 ${existingFilesContext}`
 
         const fileContents: string[] = []
@@ -640,10 +746,10 @@ ${existingFilesContext}`
             if (url && (url.startsWith('http') || url.startsWith('data:') || url.startsWith('blob:'))) {
               try {
                 let fetchUrl = url
-                const R2_DOMAIN = "pub-d259d1d2737843cb8bcb2b1ff98fc9c6.r2.dev"
-                if (fetchUrl.includes(R2_DOMAIN)) {
-                  const urlObj = new URL(fetchUrl)
-                  fetchUrl = `/api/r2-proxy${urlObj.pathname}`
+                const parsedR2 = parseR2Url(fetchUrl)
+                const workerUrl = import.meta.env.VITE_R2_WORKER_URL as string | undefined
+                if (parsedR2 && workerUrl) {
+                  fetchUrl = `${workerUrl.replace(/\/+$/, "")}/file/${parsedR2.userId}/${parsedR2.r2Key}`
                 }
 
                 if (fetchUrl.startsWith('data:')) {
@@ -699,6 +805,10 @@ ${existingFilesContext}`
         if (fileContents.length > 0) {
           processedContent = `${content}\n\nReferenced files:\n${fileContents.join("\n\n")}`
         }
+      } else {
+        projectContext = `\n\n[PROJECT CONTEXT]
+You are NOT currently connected to any project.
+IMPORTANT RULE: If the user starts describing a game idea or starts to talk anything about building a game, YOU MUST include the EXACT marker "[CONNECT_PROJECT_REQUIRED]" somewhere in your response. This will prompt the user in the UI to connect to a project or create one.`
       }
 
       // Append project context
@@ -740,9 +850,8 @@ ${existingFilesContext}`
       // Show thinking state initially
       setIsThinking(true)
 
-      // Streaming mode: Streaming with typing animation (3 words at a time)
+      // Streaming mode: progressive word-by-word rendering
       let accumulatedText = ""
-      let displayedWordCount = 0
 
       try {
         // ─── Orchestrator: classify intent and route to optimal model ───
@@ -754,12 +863,12 @@ ${existingFilesContext}`
           }
         })
 
-        // Check first yield — if the generator returns intent "general", use existing Gemini streaming
+        // Check first yield — if the generator returns intent ("general" or "light_coding"), use existing Gemini streaming
         const firstResult = await orchestratorStream.next()
         let useGeminiDirect = false
 
         if (firstResult.done) {
-          // Generator returned immediately with intent ("general")
+          // Generator returned immediately with intent ("general" or "light_coding")
           useGeminiDirect = true
           setIsSwitchingModel(false)
           setSwitchingMessage("")
@@ -793,18 +902,14 @@ ${existingFilesContext}`
 
           accumulatedText += chunk
 
-          // Split into words (preserving spaces)
-          const allWords = accumulatedText.match(/\S+\s*/g) || []
-
-          // Display 3 words at a time
-          while (allWords.length > displayedWordCount && !shouldStopRef.current) {
-            const wordsToDisplay = allWords.slice(0, Math.min(displayedWordCount + 3, allWords.length))
-            const displayText = wordsToDisplay.join("")
-            setStreamingContent(displayText)
-            displayedWordCount = wordsToDisplay.length
-
-            // Small delay for typing effect
-            await new Promise(resolve => setTimeout(resolve, 100))
+          // Strip tool markers from display and show tool hints
+          if (hasToolCalls(accumulatedText)) {
+            const displayText = stripToolMarkersForDisplay(accumulatedText)
+            const hints = extractToolHints(accumulatedText)
+            setToolExecutionHints(hints)
+            flushStreamImmediately(displayText)
+          } else {
+            enqueueStreamChunk(chunk)
           }
 
           // Check again after processing chunk
@@ -813,10 +918,8 @@ ${existingFilesContext}`
           }
         }
 
-        // Final update with complete text (only if not stopped)
+          // Keep progressive rendering and avoid a sudden final jump.
         if (!shouldStopRef.current && accumulatedText) {
-          setStreamingContent(accumulatedText)
-
           // ─── Web Search Detection & Round-Trip ───
           const webSearchMatch = accumulatedText.match(/\[WEB_SEARCH:\s*(.+?)\]/)
           if (webSearchMatch) {
@@ -827,7 +930,7 @@ ${existingFilesContext}`
             const contentBeforeSearch = accumulatedText.substring(0, webSearchMatch.index).trim()
 
             // Show a "searching" message
-            setStreamingContent(contentBeforeSearch || "Let me search the web for that...")
+            flushStreamImmediately(contentBeforeSearch || "Let me search the web for that...")
             setIsThinking(true)
             setThinkingText("🔍 Searching the web...")
 
@@ -849,24 +952,18 @@ ${existingFilesContext}`
               setThinkingText("")
 
               let enrichedText = ""
-              let enrichedWordCount = 0
 
               for await (const chunk of sendMessageToGeminiStream(enrichedMessages)) {
                 if (shouldStopRef.current) break
                 enrichedText += chunk
-                const allWords = enrichedText.match(/\S+\s*/g) || []
-                while (allWords.length > enrichedWordCount && !shouldStopRef.current) {
-                  const wordsToDisplay = allWords.slice(0, Math.min(enrichedWordCount + 3, allWords.length))
-                  setStreamingContent(wordsToDisplay.join(""))
-                  enrichedWordCount = wordsToDisplay.length
-                  await new Promise(resolve => setTimeout(resolve, 100))
-                }
-                if (shouldStopRef.current) break
+                enqueueStreamChunk(chunk)
               }
 
               // Save the enriched response with search results attached
               const finalContent = enrichedText || contentBeforeSearch || accumulatedText
-              setStreamingContent(finalContent)
+              if (finalContent) {
+                flushStreamImmediately(finalContent)
+              }
 
               const assistantMessage: Message = {
                 id: assistantMessageId,
@@ -877,9 +974,7 @@ ${existingFilesContext}`
               }
               addStreamingMessage(assistantMessage)
 
-              if (currentProject && user) {
-                parseAndExecuteFileOperations(finalContent)
-              }
+              parseAndExecuteFileOperations(finalContent, assistantMessageId)
               parseAndExecuteGameDevSteps(finalContent)
               if (!titleGeneratedRef.current && currentSessionId) {
                 titleGeneratedRef.current = true
@@ -923,10 +1018,8 @@ ${existingFilesContext}`
             }
             addStreamingMessage(assistantMessage)
 
-            // Parse and execute file operations if project is connected
-            if (currentProject && user) {
-              parseAndExecuteFileOperations(accumulatedText)
-            }
+            // Parse and execute file operations
+            parseAndExecuteFileOperations(accumulatedText, assistantMessageId)
 
             // Parse and execute game dev steps (always check for game type detection)
             parseAndExecuteGameDevSteps(accumulatedText)
@@ -953,42 +1046,25 @@ ${existingFilesContext}`
             }
           }
         } else if (shouldStopRef.current && accumulatedText) {
-          // Save partial content if stopped
+          // Save partial content if stopped — but do NOT execute file operations.
+          // The user explicitly cancelled, so any tool calls in the partial response
+          // should be stripped and ignored.
+          const { strippedContent } = parseToolCalls(accumulatedText)
           const assistantMessage: Message = {
             id: assistantMessageId,
             role: "assistant",
-            content: accumulatedText,
+            content: strippedContent || accumulatedText,
             timestamp: new Date(),
           }
           addStreamingMessage(assistantMessage)
 
-          // Parse and execute file operations if project is connected
-          if (currentProject && user) {
-            parseAndExecuteFileOperations(accumulatedText)
-          }
-
-          // Parse and execute game dev steps (always check for game type detection)
-          parseAndExecuteGameDevSteps(accumulatedText)
+          // NOTE: We intentionally skip parseAndExecuteFileOperations here.
+          // The user pressed stop, so file changes from this request are discarded.
 
           // Generate title after first AI response
           if (!titleGeneratedRef.current && currentSessionId) {
             titleGeneratedRef.current = true
             generateTitleForSession()
-          }
-
-          // Record project context after stopped AI response
-          if (currentProject && currentSessionId) {
-            const freshState = useAppStore.getState()
-            const session = freshState.sessions.find(s => s.id === currentSessionId)
-            if (session) {
-              recordSessionToProjectContext(
-                currentProject.id,
-                currentProject.name,
-                currentSessionId,
-                session.title,
-                session.messages.map(m => ({ role: m.role, content: m.content }))
-              )
-            }
           }
         }
       } catch (streamError) {
@@ -1023,27 +1099,16 @@ ${existingFilesContext}`
           try {
             // Re-attempt streaming (the function will use base model now)
             let fallbackAccumulatedText = ""
-            let fallbackDisplayedWordCount = 0
 
             for await (const chunk of sendMessageToGeminiStream(geminiMessages)) {
               if (shouldStopRef.current) break
 
               fallbackAccumulatedText += chunk
-              const allWords = fallbackAccumulatedText.match(/\S+\s*/g) || []
-
-              while (allWords.length > fallbackDisplayedWordCount && !shouldStopRef.current) {
-                const wordsToDisplay = allWords.slice(0, Math.min(fallbackDisplayedWordCount + 3, allWords.length))
-                const displayText = wordsToDisplay.join("")
-                setStreamingContent(displayText)
-                fallbackDisplayedWordCount = wordsToDisplay.length
-                await new Promise(resolve => setTimeout(resolve, 100))
-              }
-
-              if (shouldStopRef.current) break
+              enqueueStreamChunk(chunk)
             }
 
             if (!shouldStopRef.current && fallbackAccumulatedText) {
-              setStreamingContent(fallbackAccumulatedText)
+              flushStreamImmediately(fallbackAccumulatedText)
               const assistantMessage: Message = {
                 id: assistantMessageId,
                 role: "assistant",
@@ -1123,6 +1188,9 @@ ${existingFilesContext}`
               timestamp: new Date(),
             }
             addMessage(assistantMessage)
+            
+            parseAndExecuteFileOperations(response, assistantMessageId)
+            parseAndExecuteGameDevSteps(response)
 
             // Generate title after first AI response
             if (!titleGeneratedRef.current && currentSessionId) {
@@ -1193,6 +1261,9 @@ ${existingFilesContext}`
           }
           addMessage(assistantMessage)
 
+          parseAndExecuteFileOperations(response, assistantMessageId)
+          parseAndExecuteGameDevSteps(response)
+
           // Generate title after first AI response
           if (!titleGeneratedRef.current && currentSessionId) {
             titleGeneratedRef.current = true
@@ -1242,6 +1313,7 @@ ${existingFilesContext}`
       }
       addMessage(errorMessage)
     } finally {
+      stopStreamDrain()
       setIsGenerating(false)
       setStreamingMessageId(null)
       setStreamingContent("")
@@ -1249,103 +1321,214 @@ ${existingFilesContext}`
       setIsThinking(false)
       setIsSwitchingModel(false)
       setSwitchingMessage("")
+      setToolExecutionHints([])
+      resetStreamRenderer()
     }
   }
 
-  // Parse and execute file operations from AI response
-  const parseAndExecuteFileOperations = async (content: string) => {
-    if (!currentProject || !user) return
+  // Parse and execute file operations from AI response — NEW SANDBOX PIPELINE
+  const parseAndExecuteFileOperations = async (content: string, messageId?: string, depth: number = 0) => {
+    // Use the new parser to extract tool calls
+    const { toolCalls, strippedContent } = parseToolCalls(content)
+    if (toolCalls.length === 0) return
 
-    // Parse CREATE_FILE operations: [CREATE_FILE: path, content]
-    const createFileRegex = /\[CREATE_FILE:\s*([^\]]+?),\s*([^\]]+?)\]/gs
-    let match
-    const createMatches: Array<{ path: string; content: string }> = []
-    while ((match = createFileRegex.exec(content)) !== null) {
-      createMatches.push({
-        path: match[1].trim(),
-        content: match[2].trim()
-      })
+    // Separate edit-image calls (handled specially) from file tools
+    const editImageCalls = toolCalls.filter(tc => tc.params.__editImage)
+    const fileToolCalls = toolCalls.filter(tc => !tc.params.__editImage)
+
+    // Build fileOperations array for message metadata (UI uses this for the compact bars)
+    // Prefer real sandbox diff stats (linesAdded/linesRemoved) when available.
+    const currentFilesForStats = getGeneratedFiles() || {}
+    let sandboxPreviewFilesForStats = { ...currentFilesForStats }
+    const statsByToolCallId = new Map<string, SandboxChange[]>()
+    for (const tc of fileToolCalls) {
+      const { changes } = executeToolInSandbox(tc, sandboxPreviewFilesForStats)
+      if (changes.length > 0) {
+        statsByToolCallId.set(tc.id, changes)
+        sandboxPreviewFilesForStats = applySandboxChangesToFileMap(sandboxPreviewFilesForStats, changes)
+      }
     }
 
-    // Parse EDIT_FILE operations: [EDIT_FILE: path, new content]
-    const editFileRegex = /\[EDIT_FILE:\s*([^\]]+?),\s*([^\]]+?)\]/gs
-    const editMatches: Array<{ path: string; content: string }> = []
-    while ((match = editFileRegex.exec(content)) !== null) {
-      editMatches.push({
-        path: match[1].trim(),
-        content: match[2].trim()
-      })
+    const fileOperations = toolCalls
+      .filter(tc => !isReadOnlyTool(tc.tool))
+      .map(tc => {
+      const changes = statsByToolCallId.get(tc.id) || []
+      const primary = changes[0]
+      return {
+        type: tc.tool === 'create_file' ? 'create' as const
+          : tc.tool === 'delete_file' ? 'delete' as const
+          : tc.params.__editImage ? 'edit-image' as const
+          : 'edit' as const,
+        path: tc.params.path,
+        content: tc.params.content,
+        linesAdded: primary?.linesAdded ?? 0,
+        linesRemoved: primary?.linesRemoved ?? 0,
+        prompt: tc.params.prompt,
+        model: tc.params.model,
+      }
+    })
+
+    // Update message content: strip markers, attach fileOperations metadata
+      if (messageId) {
+      const msgs = useAppStore.getState().messages
+      const updatedMessages = msgs.map(m =>
+        m.id === messageId
+          ? {
+              ...m,
+              content: strippedContent || m.content,
+              ...(fileOperations.length > 0 ? { fileOperations } : {}),
+            }
+          : m
+      )
+      setMessages(updatedMessages)
     }
 
-    // Parse DELETE_FILE operations: [DELETE_FILE: path]
-    const deleteFileRegex = /\[DELETE_FILE:\s*([^\]]+?)\]/g
-    const deleteMatches: string[] = []
-    while ((match = deleteFileRegex.exec(content)) !== null) {
-      deleteMatches.push(match[1].trim())
+    // ── Process file tool calls through the sandbox ──
+    const currentFiles = getGeneratedFiles() || {}
+    let sandboxPreviewFiles = { ...currentFiles }
+    const agentStore = useAgentToolStore.getState()
+    const allChanges: SandboxChange[] = []
+    const readOnlyResults: Array<{ tool: string; result: unknown }> = []
+
+    for (const toolCall of fileToolCalls) {
+      if (isReadOnlyTool(toolCall.tool)) {
+        // Read-only tools: execute immediately, no approval needed
+        const { result } = executeToolInSandbox(toolCall, sandboxPreviewFiles)
+        if (result) {
+          agentStore.addToolResult(result)
+          readOnlyResults.push({ tool: toolCall.tool, result: result.result })
+          console.log(`[AgentTool] Auto-executed read-only: ${toolCall.tool}`, result.result)
+        }
+        continue
+      }
+
+      if (isFileModifyingTool(toolCall.tool)) {
+        // File-modifying tools: execute in sandbox, stage for approval
+        const { changes } = executeToolInSandbox(toolCall, sandboxPreviewFiles)
+        if (changes.length > 0) {
+          allChanges.push(...changes)
+          agentStore.addSandboxChanges(changes)
+          // Only add to pendingToolCalls if NOT in auto_execute mode.
+          // This prevents the ToolApprovalCard from flashing briefly.
+          if (agentStore.approvalMode !== 'auto_execute') {
+            agentStore.addPendingToolCall(toolCall)
+          }
+          sandboxPreviewFiles = applySandboxChangesToFileMap(sandboxPreviewFiles, changes)
+        }
+      }
     }
 
-    // Parse EDIT_IMAGE operations: [EDIT_IMAGE: path, prompt, model]
-    const editImageRegex = /\[EDIT_IMAGE:\s*([^\]\,]+?),\s*([^\]\,]+?)(?:,\s*([^\]]+?))?\]/g
-    const editImageMatches: Array<{ path: string; prompt: string; model: string }> = []
-    while ((match = editImageRegex.exec(content)) !== null) {
-      editImageMatches.push({
-        path: match[1].trim(),
-        prompt: match[2].trim(),
-        model: match[3] ? match[3].trim() : "nano-banana-edit"
-      })
-    }
-
-    // Execute CREATE_FILE operations
-    for (const { path, content: fileContent } of createMatches) {
+    // If model only performed read-only calls during an edit request, continue once with tool results.
+    if (
+      depth < 1 &&
+      fileToolCalls.length > 0 &&
+      fileToolCalls.every(tc => isReadOnlyTool(tc.tool)) &&
+      allChanges.length === 0
+    ) {
       try {
-        addGeneratedFile(path, fileContent)
-        await saveSingleProjectFile(
+        const state = useAppStore.getState()
+        const latestUser = [...state.messages].reverse().find(m => m.role === "user")
+        const latestUserText = latestUser?.content || ""
+        const toolResultsText = JSON.stringify(readOnlyResults, null, 2)
+
+        const continuation = await sendMessageToGemini([
+          {
+            role: "user",
+            parts: [{
+              text: `You just used read-only tools and did not apply the requested edit.
+User request: ${latestUserText}
+
+Tool results:
+${toolResultsText}
+
+Now complete the request. REQUIREMENTS:
+1) Include a short natural language response.
+2) Emit file-modifying tool call(s) to apply the actual change.
+3) Do not emit only read-only tool calls.
+4) Use structured markers: [TOOL_CALL: edit_file, { "path": "...", "content": "..." }]`,
+            }],
+          },
+        ])
+
+        if (continuation?.trim()) {
+          await parseAndExecuteFileOperations(continuation, messageId, depth + 1)
+          return
+        }
+      } catch (continuationError) {
+        console.error("[AgentTool] Continuation pass failed:", continuationError)
+      }
+    }
+
+    // ── Auto-execute mode: approve and apply immediately ──
+    if (agentStore.approvalMode === 'auto_execute' && allChanges.length > 0) {
+      // Mark all as approved
+      for (const change of allChanges) {
+        agentStore.approveChange(change.id)
+      }
+
+      // Apply to real storage (if available) or local fallback
+      const approvedChanges = allChanges.map(c => ({ ...c, status: 'approved' as const }))
+      let applied: Record<string, string | null> = {}
+
+      if (currentProject && user) {
+        applied = await applyApprovedChanges(
+          approvedChanges,
           currentProject.id,
           user.id,
-          currentProject.name,
-          path,
-          fileContent,
           null
         )
-        console.log(`AI created file: ${path}`)
-      } catch (error) {
-        console.error(`Error creating file ${path}:`, error)
+      } else {
+        // No auth/project yet: apply to local in-memory state immediately.
+        for (const c of approvedChanges) {
+          if (c.type === "delete") applied[c.path] = null
+          else if (c.type === "create" || c.type === "edit") applied[c.path] = c.newContent ?? ""
+          else if ((c.type === "rename" || c.type === "move") && c.newPath) {
+            applied[c.path] = null
+            applied[c.newPath] = c.newContent ?? c.originalContent ?? ""
+          } else if (c.type === "copy" && c.newPath) {
+            applied[c.newPath] = c.newContent ?? c.originalContent ?? ""
+          }
+        }
+      }
+
+      // Update generatedFiles in app store
+      const updatedFiles = { ...getGeneratedFiles() }
+      for (const [path, content] of Object.entries(applied)) {
+        if (content === null) {
+          delete updatedFiles[path]
+        } else {
+          updatedFiles[path] = content
+        }
+      }
+      setGeneratedFiles(updatedFiles)
+
+      // Persist local fallback (so it survives refresh) when project exists but user isn't ready yet
+      if (currentProject && !user) {
+        try {
+          const storageKey = `project_${currentProject.id}_files`
+          localStorage.setItem(storageKey, JSON.stringify({
+            files: updatedFiles,
+            timestamp: Date.now(),
+          }))
+        } catch (e) {
+          console.warn("Failed to persist fallback project files to localStorage:", e)
+        }
+      }
+
+      // Clear processed changes from sandbox
+      for (const change of allChanges) {
+        agentStore.removeSandboxChange(change.id)
+      }
+      // Clear pending tool calls
+      for (const tc of fileToolCalls) {
+        agentStore.removePendingToolCall(tc.id)
       }
     }
+    // If ask_every_time mode: changes stay in sandbox, ToolApprovalCards will render
 
-    // Execute EDIT_FILE operations
-    for (const { path, content: fileContent } of editMatches) {
-      try {
-        addGeneratedFile(path, fileContent)
-        await saveSingleProjectFile(
-          currentProject.id,
-          user.id,
-          currentProject.name,
-          path,
-          fileContent,
-          null
-        )
-        console.log(`AI edited file: ${path}`)
-      } catch (error) {
-        console.error(`Error editing file ${path}:`, error)
-      }
-    }
-
-    // Execute DELETE_FILE operations
-    for (const path of deleteMatches) {
-      try {
-        const currentFiles = getGeneratedFiles()
-        const updatedFiles = { ...currentFiles }
-        delete updatedFiles[path]
-        setGeneratedFiles(updatedFiles)
-        console.log(`AI deleted file: ${path}`)
-      } catch (error) {
-        console.error(`Error deleting file ${path}:`, error)
-      }
-    }
-
-    // Execute EDIT_IMAGE operations
-    for (const { path, prompt, model } of editImageMatches) {
+    // ── Handle EDIT_IMAGE operations (async, special flow) ──
+    for (const tc of editImageCalls) {
+      const { path, prompt, model } = tc.params
       try {
         const files = getGeneratedFiles() || {}
         let imageUrl = path
@@ -1392,29 +1575,34 @@ ${existingFilesContext}`
         const editedName = `images/ed_${truncId}.png`
         const metadataName = `images/ed_${truncId}.md`
 
-        // Save actual image URL to generatedFiles + storage (this is what the viewer loads)
+        // Save actual image URL to generatedFiles + storage (only when authenticated + connected)
         addGeneratedFile(editedName, editedUrl)
-        await saveSingleProjectFile(
-          currentProject.id,
-          user.id,
-          currentProject.name,
-          editedName,
-          editedUrl,
-          null
-        )
+        const proj = currentProject
+        const authedUser = user
+        if (proj && authedUser) {
+          await saveSingleProjectFile(
+            proj.id,
+            authedUser.id,
+            proj.name,
+            editedName,
+            editedUrl,
+            null
+          )
+        }
 
         // Save metadata separately as .md
         const newContent = `# Image Asset\n# URL: ${editedUrl}\n# Prompt: ${prompt}`
-        await saveSingleProjectFile(
-          currentProject.id,
-          user.id,
-          currentProject.name,
-          metadataName,
-          newContent,
-          null
-        )
+        if (proj && authedUser) {
+          await saveSingleProjectFile(
+            proj.id,
+            authedUser.id,
+            proj.name,
+            metadataName,
+            newContent,
+            null
+          )
+        }
 
-        // Add a message updating the user with the generated image
         addMessage({
           id: uuidv4(),
           role: "assistant",
@@ -1423,7 +1611,6 @@ ${existingFilesContext}`
           images: [editedUrl]
         })
         console.log(`AI edited image: ${path} -> ${editedName}`)
-
       } catch (error) {
         console.error("Error editing image via AI:", error)
         addMessage({
@@ -1433,6 +1620,82 @@ ${existingFilesContext}`
           timestamp: new Date()
         })
       }
+    }
+  }
+
+  // ── Handler for ToolApprovalCard approve/reject ──
+  const handleToolApprove = async (toolCallId: string) => {
+    const agentStore = useAgentToolStore.getState()
+
+    // Approve all changes for this tool call
+    agentStore.approveToolCall(toolCallId)
+
+    // Get the approved changes
+    const approvedChanges = agentStore.sandboxChanges.filter(
+      c => c.toolCallId === toolCallId && c.status === 'approved'
+    )
+
+    // Persist to R2 + Supabase (if available) or local fallback
+    let applied: Record<string, string | null> = {}
+    if (currentProject && user) {
+      applied = await applyApprovedChanges(
+        approvedChanges,
+        currentProject.id,
+        user.id,
+        null
+      )
+    } else {
+      for (const c of approvedChanges) {
+        if (c.type === "delete") applied[c.path] = null
+        else if (c.type === "create" || c.type === "edit") applied[c.path] = c.newContent ?? ""
+        else if ((c.type === "rename" || c.type === "move") && c.newPath) {
+          applied[c.path] = null
+          applied[c.newPath] = c.newContent ?? c.originalContent ?? ""
+        } else if (c.type === "copy" && c.newPath) {
+          applied[c.newPath] = c.newContent ?? c.originalContent ?? ""
+        }
+      }
+    }
+
+    // Update generatedFiles
+    const updatedFiles = { ...getGeneratedFiles() }
+    for (const [path, content] of Object.entries(applied)) {
+      if (content === null) {
+        delete updatedFiles[path]
+      } else {
+        updatedFiles[path] = content
+      }
+    }
+    setGeneratedFiles(updatedFiles)
+
+    if (currentProject && !user) {
+      try {
+        const storageKey = `project_${currentProject.id}_files`
+        localStorage.setItem(storageKey, JSON.stringify({
+          files: updatedFiles,
+          timestamp: Date.now(),
+        }))
+      } catch (e) {
+        console.warn("Failed to persist fallback project files to localStorage:", e)
+      }
+    }
+
+    // Remove processed changes from sandbox
+    for (const change of approvedChanges) {
+      agentStore.removeSandboxChange(change.id)
+    }
+  }
+
+  const handleToolReject = (toolCallId: string) => {
+    const agentStore = useAgentToolStore.getState()
+    agentStore.rejectToolCall(toolCallId)
+
+    // Remove rejected changes from sandbox
+    const rejectedChanges = agentStore.sandboxChanges.filter(
+      c => c.toolCallId === toolCallId && c.status === 'rejected'
+    )
+    for (const change of rejectedChanges) {
+      agentStore.removeSandboxChange(change.id)
     }
   }
 
@@ -1632,6 +1895,10 @@ ${existingFilesContext}`
   // Get the pending proposal from task store
   const pendingProposal = useTaskStore((s) => s.pendingProposal)
 
+  // Get pending agent tool calls and sandbox changes
+  const pendingAgentToolCalls = useAgentToolStore((s) => s.pendingToolCalls)
+  const agentSandboxChanges = useAgentToolStore((s) => s.sandboxChanges)
+
   return (
     <VoiceChatLayout>
       <div className="flex h-full w-full items-center justify-center bg-background">
@@ -1680,9 +1947,9 @@ ${existingFilesContext}`
                   {/* Logo + Text (horizontal) */}
                   <div className="flex items-center gap-3">
                     <img
-                      src={theme === "dark" ? appIconDark : appIconLight}
+                      src={appIcon}
                       alt="KOYE"
-                      className="h-12 w-12 rounded-full"
+                      className={cn("h-12 w-12 rounded-full", theme === "dark" && "invert")}
                     />
                     <div className="relative h-10 w-32 flex items-center">
                       <AnimatePresence mode="wait">
@@ -1762,6 +2029,7 @@ ${existingFilesContext}`
                           <ResponseMessage
                             key={message.id}
                             content={message.content}
+                            fileOperations={message.fileOperations}
                             images={message.images}
                             generatedImages={message.generatedImages}
                             sampleImages={message.sampleImages}
@@ -1815,6 +2083,15 @@ ${existingFilesContext}`
                       />
                     )}
 
+                    {/* Tool execution shimmer hints */}
+                    {isGenerating && toolExecutionHints.length > 0 && (
+                      <ResponseMessage
+                        content=""
+                        thinking={toolExecutionHints[toolExecutionHints.length - 1]}
+                        isThinking={true}
+                      />
+                    )}
+
                     {/* Fallback thinking state */}
                     {isGenerating && !streamingMessageId && !isThinking && !streamingContent && !isSwitchingModel && !generatingText && !isImageGenerating && (
                       <MessageBubble
@@ -1833,6 +2110,7 @@ ${existingFilesContext}`
                       />
                     )}
 
+                    {/* Agent Tool Approval Cards */}
                     {/* Task Proposal Card */}
                     {pendingProposal && (
                       <div className="py-4">
@@ -1851,6 +2129,26 @@ ${existingFilesContext}`
 
                 {/* Input Container - at bottom when messages exist */}
                 <div className="shrink-0 bg-background px-6 py-4 max-w-4xl mx-auto w-full">
+                  {/* Agent Tool Approval Banners (above input) */}
+                  {pendingAgentToolCalls.length > 0 && (
+                    <div className="space-y-2 pb-3">
+                      {pendingAgentToolCalls.map((toolCall) => {
+                        const changes = agentSandboxChanges.filter(
+                          (c) => c.toolCallId === toolCall.id
+                        )
+                        return (
+                          <ToolApprovalCard
+                            key={toolCall.id}
+                            toolCallId={toolCall.id}
+                            toolName={toolCall.tool}
+                            changes={changes}
+                            onApprove={handleToolApprove}
+                            onReject={handleToolReject}
+                          />
+                        )
+                      })}
+                    </div>
+                  )}
                   <ChatInput
                     onSend={handleSend}
                     onStop={handleStop}

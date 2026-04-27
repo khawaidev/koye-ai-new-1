@@ -1,4 +1,4 @@
-import { Box, Globe } from "lucide-react"
+import { Globe } from "lucide-react"
 import { useEffect, useState } from "react"
 import { cn } from "../../lib/utils"
 import type { ImageView, WebSearchResult } from "../../types"
@@ -7,20 +7,29 @@ import { PixelImage } from "../ui/pixel-image"
 import { Response } from "../ui/response"
 import { ShimmeringText } from "../ui/shimmering-text"
 import { ConnectProjectPrompt } from "./ConnectProjectPrompt"
-import { ImageGenerationCards } from "./ImageGenerationCards"
-import { VideoPlayer } from "./VideoPlayer"
 import { ChatAvatar } from "./VoiceChatLayout"
 import { WebSearchResults } from "./WebSearchResults"
 import { SquareLoader } from "../ui/SquareLoader"
+import { FileOperationCard, type FileOperation } from "./FileOperationCard"
+import { ImageGenLoadingCard } from "./generation/ImageGenLoadingCard"
+import { AudioGenLoadingCard } from "./generation/AudioGenLoadingCard"
+import { VideoGenLoadingCard } from "./generation/VideoGenLoadingCard"
+import { Model3DGenLoadingCard } from "./generation/Model3DGenLoadingCard"
 
 interface ResponseMessageProps {
   content: string
+  fileOperations?: FileOperation[]
   images?: string[]
   generatedImages?: Array<{ view: ImageView; url: string }>
   sampleImages?: Array<{ id: number; url: string; prompt: string }>
   videos?: string[] // Array of video URLs
   model3dUrl?: string // URL of generated 3D model
   isGeneratingImage?: boolean // Show image generation loading indicator
+  isGeneratingVideo?: boolean
+  isGeneratingAudio?: boolean
+  isGenerating3DModel?: boolean
+  audioUrl?: string
+  generationError?: string
   webSearchResults?: WebSearchResult // Web search results
   isWebSearching?: boolean // Show web search loading indicator
   className?: string
@@ -33,14 +42,6 @@ interface ResponseMessageProps {
   onCreateProject?: () => void
 }
 
-const loadingPhrases = [
-  "Generating images...",
-  "Creating assets...",
-  "Rendering pixels...",
-  "Applying details...",
-  "Almost ready...",
-]
-
 export function ResponseMessage({
   content,
   images,
@@ -49,6 +50,11 @@ export function ResponseMessage({
   videos,
   model3dUrl,
   isGeneratingImage = false,
+  isGeneratingVideo = false,
+  isGeneratingAudio = false,
+  isGenerating3DModel = false,
+  audioUrl,
+  generationError,
   webSearchResults,
   isWebSearching = false,
   className,
@@ -59,6 +65,7 @@ export function ResponseMessage({
   showConnectPrompt = false,
   onConnectProject,
   onCreateProject,
+  fileOperations,
 }: ResponseMessageProps) {
   // Determine agent state based on props
   const agentState = isSwitching ? "thinking" : isThinking ? "thinking" : isStreaming ? "speaking" : "idle"
@@ -72,17 +79,12 @@ export function ResponseMessage({
   // State for image zoom modal
   const [selectedSampleImage, setSelectedSampleImage] = useState<{ url: string; id: number } | null>(null)
 
-  // State for cycling loading phrases
-  const [currentPhraseIndex, setCurrentPhraseIndex] = useState(0)
-
   useEffect(() => {
     if (isLoadingImages) {
       const interval = setInterval(() => {
-        setCurrentPhraseIndex((prev) => (prev + 1) % loadingPhrases.length)
+        // keep interval for subtle activity even if we don't display phrase cycling right now
       }, 3000)
       return () => clearInterval(interval)
-    } else {
-      setCurrentPhraseIndex(0)
     }
   }, [isLoadingImages])
 
@@ -91,55 +93,52 @@ export function ResponseMessage({
       <ChatAvatar role="assistant" agentState={agentState} />
 
       <div className="flex max-w-[85%] flex-col gap-3">
-        {/* Loading Indicator for Image Generation - Replaces content when loading */}
-        {isLoadingImages ? (
-          <div className="flex items-center gap-1 py-4 px-2">
-            <SquareLoader />
-            <span className="font-medium text-[15px] text-foreground">
-              {loadingPhrases[currentPhraseIndex]}
-            </span>
-          </div>
-        ) : (
-          <>
-            {/* Content */}
-            <div
-              className={cn(
-                "rounded-lg px-1 py-1 transition-all bg-transparent text-[15px] text-foreground leading-relaxed",
-                isThinking && "animate-pulse"
-              )}
-            >
-              {showThinking ? (
-                <div className="flex items-center gap-1 min-h-[44px]">
-                  <SquareLoader />
-                  <ShimmeringText
-                    text={thinking || "Thinking..."}
-                    duration={2}
-                    wave={true}
-                    shimmeringColor="hsl(var(--muted-foreground))"
-                    className="font-medium text-[15px] text-foreground"
-                  />
-                </div>
-              ) : (
-                <Response content={content} isStreaming={isStreaming} />
-              )}
+        {/* Content */}
+        <div
+          className={cn(
+            "rounded-lg px-1 py-1 transition-all bg-transparent text-[15px] text-foreground leading-relaxed",
+            isThinking && "animate-pulse"
+          )}
+        >
+          {showThinking ? (
+            <div className="flex items-center gap-1 min-h-[44px]">
+              <SquareLoader />
+              <ShimmeringText
+                text={thinking || "Thinking..."}
+                duration={2}
+                wave={true}
+                shimmeringColor="hsl(var(--muted-foreground))"
+                className="font-medium text-[15px] text-foreground"
+              />
             </div>
+          ) : (
+            <Response content={content} isStreaming={isStreaming} />
+          )}
+        </div>
 
-            {/* Web Search Loading Indicator */}
-            {isWebSearching && (
-              <div className="flex items-center gap-1 py-3 px-2">
-                <SquareLoader />
-                <div className="flex items-center gap-1.5 ml-1">
-                  <Globe className="h-4 w-4 text-blue-500" />
-                  <span className="font-medium text-sm text-foreground">Searching the web...</span>
-                </div>
-              </div>
-            )}
+        {/* Web Search Loading Indicator */}
+        {isWebSearching && (
+          <div className="flex items-center gap-1 py-3 px-2">
+            <SquareLoader />
+            <div className="flex items-center gap-1.5 ml-1">
+              <Globe className="h-4 w-4 text-blue-500" />
+              <span className="font-medium text-sm text-foreground">Searching the web...</span>
+            </div>
+          </div>
+        )}
 
-            {/* Web Search Results */}
-            {webSearchResults && (
-              <WebSearchResults results={webSearchResults} />
-            )}
-          </>
+        {/* Web Search Results */}
+        {webSearchResults && (
+          <WebSearchResults results={webSearchResults} />
+        )}
+
+        {/* File Operations */}
+        {fileOperations && fileOperations.length > 0 && (
+          <div className="flex flex-col gap-2 mt-2 w-full">
+            {fileOperations.map((op, idx) => (
+              <FileOperationCard key={idx} operation={op} />
+            ))}
+          </div>
         )}
 
         {/* Connect Project Prompt */}
@@ -150,15 +149,46 @@ export function ResponseMessage({
           />
         )}
 
-        {/* Generated 4-view images (small cards) */}
-        {generatedImages && generatedImages.length > 0 && (
-          <ImageGenerationCards
+        {/* ── Asset Generation Cards (Phase 2 UI) ── */}
+
+        {/* Images */}
+        {(isGeneratingImage || (generatedImages && generatedImages.length > 0)) && (
+          <ImageGenLoadingCard
+            status={generationError ? "error" : isGeneratingImage ? "loading" : "success"}
             images={generatedImages}
-            isLoading={isLoadingImages}
+            error={generationError}
+            imageCount={generatedImages?.length || 4}
           />
         )}
 
-        {/* Sample images for 2D selection (numbered grid) */}
+        {/* Video */}
+        {isGeneratingVideo && (
+          <VideoGenLoadingCard status="loading" />
+        )}
+        {!isGeneratingVideo && videos && videos.map((videoUrl, idx) => (
+          <VideoGenLoadingCard key={idx} status="success" videoUrl={videoUrl} />
+        ))}
+
+        {/* Audio */}
+        {(isGeneratingAudio || audioUrl) && (
+          <AudioGenLoadingCard
+            status={generationError ? "error" : isGeneratingAudio ? "loading" : "success"}
+            audioUrl={audioUrl}
+            error={generationError}
+          />
+        )}
+
+        {/* 3D Model */}
+        {(isGenerating3DModel || model3dUrl) && (
+          <Model3DGenLoadingCard
+            status={generationError ? "error" : isGenerating3DModel ? "loading" : "success"}
+            modelUrl={model3dUrl}
+            error={generationError}
+            onViewInEditor={() => window.dispatchEvent(new CustomEvent('view-3d-model', { detail: { modelUrl: model3dUrl } }))}
+          />
+        )}
+
+        {/* Sample images for 2D selection (numbered grid) kept for backwards compat/specific flow */}
         {sampleImages && sampleImages.length > 0 && (
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {sampleImages.map((sample) => (
@@ -180,7 +210,7 @@ export function ResponseMessage({
           </div>
         )}
 
-        {/* Regular uploaded images */}
+        {/* Regular uploaded images (user context) */}
         {images && images.length > 0 && (
           <div className="flex gap-2 flex-wrap">
             {images.map((img, idx) => (
@@ -196,34 +226,6 @@ export function ResponseMessage({
                 />
               </div>
             ))}
-          </div>
-        )}
-
-        {/* Generated videos (cutscenes) */}
-        {videos && videos.length > 0 && (
-          <div className="space-y-4">
-            {videos.map((videoUrl, idx) => (
-              <div key={idx} className="border-2 border-border rounded-lg overflow-hidden bg-black">
-                <VideoPlayer
-                  videoUrl={videoUrl}
-                  className="w-full"
-                  autoPlay={false}
-                />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* 3D Model View Button */}
-        {model3dUrl && (
-          <div className="mt-2">
-            <button
-              onClick={() => window.dispatchEvent(new CustomEvent('view-3d-model', { detail: { modelUrl: model3dUrl } }))}
-              className="flex items-center gap-2 bg-foreground text-background hover:bg-muted-foreground font-mono text-sm font-bold px-4 py-3 border-2 border-foreground shadow-[2px_2px_0px_0px_currentColor] transition-all rounded w-full justify-center"
-            >
-              <Box className="h-4 w-4" />
-              <span>View 3D Model</span>
-            </button>
           </div>
         )}
 

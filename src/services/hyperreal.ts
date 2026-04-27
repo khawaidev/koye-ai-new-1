@@ -9,6 +9,7 @@ import { getApiKeys, withApiFallback } from "../lib/apiFallback"
 // In production, use the direct API URL
 const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
 const HYPERREAL_API_BASE = isDev ? "/api/hyperreal" : "https://api.hypereal.tech"
+const HYPERREAL_CLOUD_API_BASE = isDev ? "/api/hyperreal-cloud" : "https://api.hypereal.cloud"
 
 // Get API keys with fallback support (VITE_HYPERREAL_API_KEY, VITE_HYPERREAL_API_KEY1, VITE_HYPERREAL_API_KEY2, etc.)
 const HYPERREAL_API_KEYS = getApiKeys("VITE_HYPERREAL_API_KEY")
@@ -19,6 +20,17 @@ const HYPERREAL_API_KEYS = getApiKeys("VITE_HYPERREAL_API_KEY")
  * - gpt-4o-image: High quality text-to-image (52 credits) — uses size
  */
 export type HyperrealImageModel = "nano-banana-t2i" | "gpt-4o-image"
+
+/**
+ * Available chat LLMs
+ */
+export type HyperrealChatModel = "gemini-3.1-pro" | "gpt-5.1-codex-max" | "gemini-2.5-pro" | string
+
+export interface HyperrealMessage {
+  role: "system" | "user" | "assistant"
+  content: string | { type: string, text?: string, image_url?: { url: string } }[]
+}
+
 
 /**
  * nano-banana-t2i aspect ratios
@@ -238,15 +250,26 @@ export async function editImageWithHyperreal(
     } else if (imageUrl.startsWith('http')) {
         console.log("🔄 Pre-downloading image for HyperReal edit...")
         try {
-            // Try direct fetch first, fall back to local proxy for CORS
+            const isCorsFriendly = imageUrl.includes('.supabase.co') || 
+                                   imageUrl.includes('.r2.dev') || 
+                                   imageUrl.includes('r2.cloudflarestorage.com') ||
+                                   imageUrl.includes('.workers.dev') ||
+                                   imageUrl.includes('localhost');
+
             let response: Response
-            try {
-                response = await fetch(imageUrl)
-                if (!response.ok) throw new Error(`HTTP ${response.status}`)
-            } catch (directErr) {
-                console.warn("   Direct fetch failed, trying local proxy...")
-                const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001"
-                const proxyUrl = `${backendUrl}/api/proxy-image?url=${encodeURIComponent(imageUrl)}`
+            if (isCorsFriendly) {
+                try {
+                    response = await fetch(imageUrl)
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+                } catch (directErr) {
+                    console.warn("   Direct fetch failed, trying public proxy...")
+                    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(imageUrl)}`
+                    response = await fetch(proxyUrl)
+                    if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`)
+                }
+            } else {
+                console.log(`   Using proxy directly for cross-origin URL: ${imageUrl.substring(0, 50)}...`)
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(imageUrl)}`
                 response = await fetch(proxyUrl)
                 if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`)
             }
@@ -497,7 +520,7 @@ export async function generate3DModelWithHypereal(
             console.log("📤 Hypereal 3D Generation Request:", payload)
 
             // The API documentation uses https://api.hypereal.cloud
-            const response = await fetch("https://api.hypereal.cloud/api/v1/3d/generate", {
+            const response = await fetch(`${HYPERREAL_CLOUD_API_BASE}/api/v1/3d/generate`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -530,3 +553,120 @@ export async function generate3DModelWithHypereal(
         1
     )
 }
+
+/**
+ * Send a streaming chat completion to Hyperreal (SSE)
+ * Yields text chunks as they arrive.
+ */
+export async function* sendMessageToHyperrealStream(
+  model: HyperrealChatModel,
+  messages: HyperrealMessage[],
+  temperature: number = 0.8,
+  maxTokens?: number
+): AsyncGenerator<string, void, unknown> {
+  if (HYPERREAL_API_KEYS.length === 0) {
+    throw new Error("HyperReal API key is required. Set VITE_HYPERREAL_API_KEY in your .env file")
+  }
+
+  let lastError: Error | null = null
+
+  for (const apiKey of HYPERREAL_API_KEYS) {
+    try {
+      const body: any = {
+        model,
+        messages,
+        temperature,
+        stream: true,
+      }
+      if (maxTokens) body.max_tokens = maxTokens
+
+      // Use cloud API base for chat — api.hypereal.tech redirects to api.hypereal.cloud,
+      // which breaks the Vite proxy (browser follows redirect → CORS error)
+      // Must use full path /v1/chat/completions to avoid redirects!
+      const response = await fetch(`${HYPERREAL_CLOUD_API_BASE}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        const errMsg = `Hyperreal API error: ${response.status} ${response.statusText} - ${JSON.stringify(errorData)}`
+        if ([401, 402, 403, 429].includes(response.status)) {
+          lastError = new Error(errMsg)
+          continue
+        }
+        throw new Error(errMsg)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error("No response body stream")
+
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // Process SSE lines
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || "" // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed || trimmed === "data: [DONE]") continue
+          if (!trimmed.startsWith("data: ")) continue
+
+          try {
+            const json = JSON.parse(trimmed.slice(6))
+            const delta = json.choices?.[0]?.delta?.content
+            if (delta) {
+              yield delta
+            }
+          } catch {
+            // Skip malformed JSON lines
+          }
+        }
+      }
+
+      // Process remaining buffer
+      if (buffer.trim() && buffer.trim() !== "data: [DONE]" && buffer.trim().startsWith("data: ")) {
+        try {
+          const json = JSON.parse(buffer.trim().slice(6))
+          const delta = json.choices?.[0]?.delta?.content
+          if (delta) yield delta
+        } catch {
+          // Skip
+        }
+      }
+
+      // Successful stream — exit
+      return
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      const errMsg = lastError.message.toLowerCase()
+      if (
+        errMsg.includes("401") ||
+        errMsg.includes("402") ||
+        errMsg.includes("403") ||
+        errMsg.includes("429") ||
+        errMsg.includes("quota") ||
+        errMsg.includes("cors") ||
+        errMsg.includes("failed to fetch") ||
+        errMsg.includes("err_failed")
+      ) {
+        continue
+      }
+      throw lastError
+    }
+  }
+
+  throw lastError || new Error("All Hyperreal API keys failed")
+}
+

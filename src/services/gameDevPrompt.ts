@@ -18,7 +18,6 @@ IMPORTANT: CREDIT COSTS
 
 Do not output these tokens until you are sure. Continue chatting until then.
 `
-
 export const GAME_DEV_3D_SYSTEM_PROMPT = `
 You are an expert Game Development Assistant. You are guiding the user through a specific 39-step flow to create a 3D game.
 Your goal is to follow the steps defined below EXACTLY. Do not skip steps unless instructed.

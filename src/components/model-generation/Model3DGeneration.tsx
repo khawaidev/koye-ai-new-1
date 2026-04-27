@@ -1,18 +1,21 @@
 import { OrbitControls, PerspectiveCamera, useGLTF } from "@react-three/drei"
 import { Canvas } from "@react-three/fiber"
-import { Bone, Box, ChevronLeft, ChevronRight, Download, MessageSquare, Upload } from "lucide-react"
+import { Bone, Box, ChevronLeft, ChevronRight, Download, MessageSquare, Upload, FolderInput } from "lucide-react"
 import { Suspense, useEffect, useRef, useState } from "react"
 import { useAuth } from "../../hooks/useAuth"
 import { usePricing } from "../../hooks/usePricing"
 import { cn } from "../../lib/utils"
 import { uuidv4 } from "../../lib/uuid"
 import { create3DModelTask, queryTaskStatus, type GenerationMode, type GenerationType, type ModelFormat, type ModelResolution } from "../../services/hitem3d"
-import { type RiggingTask } from "../../services/meshy"
-import { generate3DModelWithHypereal } from "../../services/hyperreal"
+import { type RiggingTask } from "../../services/tripo"
 import { saveModel } from "../../services/multiDbDataService"
 import { saveSingleProjectFile } from "../../services/projectFiles"
-import { createRiggingTask, getRiggingTask } from "../../services/tripo"
+import { createRiggingTask, getRiggingTask, createTextTo3DTask, getTripoTaskResult, type TripoModelVersion } from "../../services/tripo"
 import { useAppStore } from "../../store/useAppStore"
+import { useTaskStore } from "../../store/useTaskStore"
+import { checkRateLimit, recordRequest, getRateLimitMessage } from "../../services/rateLimiter"
+import { useToast } from "../ui/toast"
+import { ImportToProjectPopup } from "../ui/ImportToProjectPopup"
 import { Button } from "../ui/button"
 
 type SourceMode = "image" | "text"
@@ -29,6 +32,7 @@ interface GeneratedModel {
   riggingProgress?: number
   riggedModelUrl?: string
   riggedModelBlobUrl?: string // Blob URL for CORS-restricted models
+  isTripoTask?: boolean
 }
 
 function GLTFModelLoader({ url }: { url: string }) {
@@ -79,6 +83,11 @@ function ModelScene({ modelUrl, format }: { modelUrl: string; format: ModelForma
 export function Model3DGeneration() {
   const { user, isAuthenticated } = useAuth()
   const { checkLimit, incrementUsage } = usePricing()
+  const { addTask, updateTask } = useTaskStore()
+  const { addToast } = useToast()
+  const { setStage } = useAppStore()
+
+  const [importPopup, setImportPopup] = useState<{ isOpen: boolean; url: string; type: any; name: string } | null>(null)
 
   // Source mode (image or text)
   const [sourceMode, setSourceMode] = useState<SourceMode>("image")
@@ -102,12 +111,12 @@ export function Model3DGeneration() {
     right: null,
   })
 
-  // Text-to-3D state (Hypereal)
+  // Text-to-3D state (Tripo)
   const [textPrompt, setTextPrompt] = useState("")
-  const [artStyle, setArtStyle] = useState<"realistic" | "sculpture">("realistic")
+  const [textModelVersion, setTextModelVersion] = useState<TripoModelVersion>("v3.1-20260211")
   const [topology, setTopology] = useState<"quad" | "triangle">("triangle")
-  const [textTo3DPolygons, setTextTo3DPolygons] = useState<number>(30000)
-  const [enablePbr, setEnablePbr] = useState<boolean>(false)
+  const [enableTexture, setEnableTexture] = useState<boolean>(true)
+  const [enablePbr, setEnablePbr] = useState<boolean>(true)
 
   // Common state
   const [isGenerating, setIsGenerating] = useState(false)
@@ -126,8 +135,9 @@ export function Model3DGeneration() {
   const [showFormatSelect, setShowFormatSelect] = useState(false)
   const [showResolutionSelect, setShowResolutionSelect] = useState(false)
   const [showTextureSelect, setShowTextureSelect] = useState(false)
-  const [showArtStyleSelect, setShowArtStyleSelect] = useState(false)
+  const [showTextModelSelect, setShowTextModelSelect] = useState(false)
   const [showTopologySelect, setShowTopologySelect] = useState(false)
+  const [showTextTextureSelect, setShowTextTextureSelect] = useState(false)
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -139,7 +149,8 @@ export function Model3DGeneration() {
         setShowFormatSelect(false)
         setShowResolutionSelect(false)
         setShowTextureSelect(false)
-        setShowArtStyleSelect(false)
+        setShowTextModelSelect(false)
+        setShowTextTextureSelect(false)
         setShowTopologySelect(false)
       }
     }
@@ -186,7 +197,13 @@ export function Model3DGeneration() {
     const pollInterval = setInterval(async () => {
       for (const model of pendingTasks) {
         try {
-          const status = await queryTaskStatus(model.taskId)
+          let status;
+          if (model.isTripoTask) {
+            status = await getTripoTaskResult(model.taskId);
+          } else {
+            status = await queryTaskStatus(model.taskId);
+          }
+
           setGeneratedModels(prev => prev.map(m =>
             m.id === model.id
               ? { ...m, status: status.status, progress: status.progress, url: status.result?.modelUrl || m.url }
@@ -204,13 +221,24 @@ export function Model3DGeneration() {
                 ...model,
                 status: "completed" as const,
                 url: modelUrl,
-                format: modelFormat,
+                format: modelFormat as ModelFormat,
               }
               saveModelToDatabase(updatedModel, modelUrl, modelFormat)
             }
+            
+            // Update task store
+            updateTask(model.taskId, { status: "completed", completedAt: Date.now(), assetUrl: modelUrl, resultUrl: modelUrl })
+            addToast({
+              title: "3D Model Ready",
+              description: "Your 3D model has been generated successfully.",
+              variant: "success",
+              action: { label: "View", onClick: () => setStage("modelGeneration") },
+            })
           } else if (status.status === "failed") {
             setIsGenerating(false)
             setError(status.error || "Model generation failed")
+            updateTask(model.taskId, { status: "failed", error: status.error || "Generation failed", completedAt: Date.now() })
+            addToast({ title: "Generation Failed", description: status.error || "Generation failed", variant: "error" })
           }
         } catch (err) {
           console.error("Error polling task status:", err)
@@ -483,6 +511,15 @@ export function Model3DGeneration() {
   const handleGenerate = async () => {
     setError(null)
 
+    // Rate Limit Check
+    const rateCheck = checkRateLimit("model3d-generation" as any)
+    if (!rateCheck.allowed) {
+      const msg = getRateLimitMessage("model3d-generation" as any, rateCheck.retryAfterMs)
+      setError(msg)
+      addToast({ title: "Rate Limit", description: msg, variant: "warning" })
+      return
+    }
+
     // Check usage limit
     if (isAuthenticated && user) {
       const limitCheck = await checkLimit("image_to_3d")
@@ -500,49 +537,56 @@ export function Model3DGeneration() {
       }
 
       setIsGenerating(true)
-      
-      const modelId = `text3d-${Date.now()}`
-      
-      const newModel: GeneratedModel = {
-        id: modelId,
-        taskId: modelId,
-        format: "glb",
-        url: "",
-        status: "processing",
-        progress: 10,
-      }
-      
-      setGeneratedModels(prev => [newModel, ...prev])
-      setSelectedModelIndex(0)
+      recordRequest("model3d-generation" as any)
 
       try {
-        const result = await generate3DModelWithHypereal(textPrompt, {
-          art_style: artStyle,
-          topology: topology,
-          target_polycount: textTo3DPolygons,
-          enable_pbr: enablePbr
+        const taskId = await createTextTo3DTask(textPrompt, {
+          model_version: textModelVersion,
+          quad: topology === "quad",
+          pbr: enablePbr,
+          texture: enableTexture,
         })
 
-        const completedModel: GeneratedModel = {
-          ...newModel,
-          status: "completed",
-          url: result.url,
+        const newModel: GeneratedModel = {
+          id: `text3d-${Date.now()}`,
+          taskId,
+          format: "glb",
+          url: "",
+          status: "pending",
+          isTripoTask: true,
         }
-        
-        setGeneratedModels(prev => prev.map(m => m.id === modelId ? completedModel : m))
+
+        setGeneratedModels(prev => [newModel, ...prev])
         setSelectedModelIndex(0)
-        
+
+        // Dispatch background task
+        addTask({
+          id: taskId,
+          type: "text-to-3d" as any,
+          status: "running",
+          config: {},
+          createdAt: Date.now(),
+          startedAt: Date.now(),
+          assetName: textPrompt.substring(0, 10),
+          assetType: "character" as any,
+          prompt: textPrompt,
+        })
+        addToast({
+          title: "Task Started",
+          description: `3D Generation sent to background`,
+          variant: "info",
+        })
+
+        // Wait till it finishes to increment usage, but we can also just increment right away
         if (isAuthenticated && user) {
-          saveModelToDatabase(completedModel, result.url, "glb")
           await incrementUsage("image_to_3d")
         }
-        
-        setIsGenerating(false)
+
       } catch (err) {
-        console.error("Error generating Text to 3D:", err)
+        console.error("Error generating Text to 3D with Tripo:", err)
         const errorMessage = err instanceof Error ? err.message : "Failed to generate 3D model from text"
         setError(errorMessage)
-        setGeneratedModels(prev => prev.map(m => m.id === modelId ? { ...m, status: "failed" } : m))
+      } finally {
         setIsGenerating(false)
       }
       return
@@ -563,6 +607,7 @@ export function Model3DGeneration() {
     }
 
     setIsGenerating(true)
+    recordRequest("model3d-generation" as any)
 
     try {
       const images: File[] = generationMode === "single"
@@ -588,6 +633,23 @@ export function Model3DGeneration() {
 
       setGeneratedModels(prev => [newModel, ...prev])
       setSelectedModelIndex(0) // Select the newly created model
+
+      // Dispatch background task
+      addTask({
+        id: taskId,
+        type: "image-to-3d" as any,
+        status: "running",
+        config: {},
+        createdAt: Date.now(),
+        startedAt: Date.now(),
+        assetName: `Model (${generationMode})`,
+        assetType: "character" as any,
+      })
+      addToast({
+        title: "Task Started",
+        description: `Image to 3D generation sent to background`,
+        variant: "info",
+      })
 
       // Increment usage
       if (isAuthenticated && user) {
@@ -908,6 +970,12 @@ export function Model3DGeneration() {
                     <Button onClick={() => handleDownload(selectedModel)} className="bg-foreground text-background hover:bg-foreground/90 text-xs rounded-xl shadow-lg h-8">
                       <Download className="h-3 w-3 mr-1.5" /> {selectedModel.format.toUpperCase()}
                     </Button>
+                    <Button 
+                      onClick={() => setImportPopup({ isOpen: true, url: selectedModel.url, type: 'model3d', name: `Generated Component (${selectedModel.format})` })}
+                      className="bg-primary text-primary-foreground hover:bg-primary/90 text-xs rounded-xl shadow-lg h-8 px-3"
+                    >
+                      <FolderInput className="w-3 h-3 mr-1" /> Import
+                    </Button>
                   </>
                 )}
               </div>
@@ -1044,7 +1112,7 @@ export function Model3DGeneration() {
                         </button>
                         {showModeSelect && (
                           <div className="absolute bottom-[calc(100%+8px)] left-0 min-w-[130px] bg-background border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-                            {[{v: "single", l: "From Single"}, {v: "four", l: "From Multiple"}].map(o => (
+                            {[{ v: "single", l: "From Single" }, { v: "four", l: "From Multiple" }].map(o => (
                               <button key={o.v} onClick={() => { setGenerationMode(o.v as GenerationMode); setShowModeSelect(false) }}
                                 className={cn("w-full text-left px-3 py-2 text-xs transition-colors", generationMode === o.v ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
                               >{o.l}</button>
@@ -1082,7 +1150,7 @@ export function Model3DGeneration() {
                         </button>
                         {showFormatSelect && (
                           <div className="absolute bottom-[calc(100%+8px)] left-0 min-w-[90px] bg-background border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-                            {["glb","obj","stl","fbx"].map(f => (
+                            {["glb", "obj", "stl", "fbx"].map(f => (
                               <button key={f} onClick={() => { setFormat(f as ModelFormat); setShowFormatSelect(false) }}
                                 className={cn("w-full text-left px-3 py-2 text-xs transition-colors", format === f ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
                               >.{f}</button>
@@ -1095,20 +1163,40 @@ export function Model3DGeneration() {
 
                   {sourceMode === "text" && (
                     <>
-                      {/* Art Style */}
+                      {/* Text Model Version */}
                       <div className="relative media-dropdown-element">
                         <button
-                          onClick={() => { setShowArtStyleSelect(!showArtStyleSelect); setShowTopologySelect(false) }}
+                          onClick={() => { setShowTextModelSelect(!showTextModelSelect); setShowTopologySelect(false); setShowTextTextureSelect(false) }}
                           className="flex items-center gap-2 bg-background border border-border text-foreground text-xs px-3 py-1 rounded-full hover:bg-muted transition-colors"
                         >
-                          <span className="capitalize">{artStyle}</span>
-                          <ChevronRight className={cn("w-3 h-3 text-muted-foreground transition-transform", showArtStyleSelect ? "-rotate-90" : "rotate-90")} />
+                          <span className="capitalize">{textModelVersion.split("-")[0]}</span>
+                          <ChevronRight className={cn("w-3 h-3 text-muted-foreground transition-transform", showTextModelSelect ? "-rotate-90" : "rotate-90")} />
                         </button>
-                        {showArtStyleSelect && (
+                        {showTextModelSelect && (
                           <div className="absolute bottom-[calc(100%+8px)] left-0 min-w-[110px] bg-background border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-                            {[{v:"realistic",l:"Realistic"},{v:"sculpture",l:"Sculpture"}].map(o => (
-                              <button key={o.v} onClick={() => { setArtStyle(o.v as any); setShowArtStyleSelect(false) }}
-                                className={cn("w-full text-left px-3 py-2 text-xs transition-colors", artStyle === o.v ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
+                            {[{ v: "v3.1-20260211", l: "V3.1 (Default)" }, { v: "P1-20260311", l: "P1.0" }].map(o => (
+                              <button key={o.v} onClick={() => { setTextModelVersion(o.v as TripoModelVersion); setShowTextModelSelect(false) }}
+                                className={cn("w-full text-left px-3 py-2 text-xs transition-colors", textModelVersion === o.v ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
+                              >{o.l}</button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Texture */}
+                      <div className="relative media-dropdown-element">
+                        <button
+                          onClick={() => { setShowTextTextureSelect(!showTextTextureSelect); setShowTopologySelect(false); setShowTextModelSelect(false) }}
+                          className="flex items-center gap-2 bg-background border border-border text-foreground text-xs px-3 py-1 rounded-full hover:bg-muted transition-colors"
+                        >
+                          <span>{enableTexture ? "With Texture" : "Base Mesh"}</span>
+                          <ChevronRight className={cn("w-3 h-3 text-muted-foreground transition-transform", showTextTextureSelect ? "-rotate-90" : "rotate-90")} />
+                        </button>
+                        {showTextTextureSelect && (
+                          <div className="absolute bottom-[calc(100%+8px)] left-0 min-w-[130px] bg-background border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                            {[{ v: true, l: "With Texture" }, { v: false, l: "Base Mesh" }].map(o => (
+                              <button key={String(o.v)} onClick={() => { setEnableTexture(o.v); setShowTextTextureSelect(false) }}
+                                className={cn("w-full text-left px-3 py-2 text-xs transition-colors", enableTexture === o.v ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
                               >{o.l}</button>
                             ))}
                           </div>
@@ -1118,7 +1206,7 @@ export function Model3DGeneration() {
                       {/* Topology */}
                       <div className="relative media-dropdown-element">
                         <button
-                          onClick={() => { setShowTopologySelect(!showTopologySelect); setShowArtStyleSelect(false) }}
+                          onClick={() => { setShowTopologySelect(!showTopologySelect); setShowTextModelSelect(false); setShowTextTextureSelect(false) }}
                           className="flex items-center gap-2 bg-background border border-border text-foreground text-xs px-3 py-1 rounded-full hover:bg-muted transition-colors"
                         >
                           <span className="capitalize">{topology}</span>
@@ -1126,7 +1214,7 @@ export function Model3DGeneration() {
                         </button>
                         {showTopologySelect && (
                           <div className="absolute bottom-[calc(100%+8px)] left-0 min-w-[130px] bg-background border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-                            {[{v:"triangle",l:"Triangle"},{v:"quad",l:"Quad"}].map(o => (
+                            {[{ v: "triangle", l: "Triangle" }, { v: "quad", l: "Quad" }].map(o => (
                               <button key={o.v} onClick={() => { setTopology(o.v as any); setShowTopologySelect(false) }}
                                 className={cn("w-full text-left px-3 py-2 text-xs transition-colors", topology === o.v ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
                               >{o.l}</button>
@@ -1161,7 +1249,7 @@ export function Model3DGeneration() {
                         </button>
                         {showTextureSelect && (
                           <div className="absolute bottom-[calc(100%+8px)] right-0 min-w-[130px] bg-background border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-                            {[{v:"both",l:"With Texture"},{v:"mesh",l:"No Texture"},{v:"texture",l:"Texture Only"}].map(o => (
+                            {[{ v: "both", l: "With Texture" }, { v: "mesh", l: "No Texture" }, { v: "texture", l: "Texture Only" }].map(o => (
                               <button key={o.v} onClick={() => { setGenerationType(o.v as GenerationType); setShowTextureSelect(false) }}
                                 className={cn("w-full text-left px-3 py-2 text-xs transition-colors", generationType === o.v ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
                               >{o.l}</button>
@@ -1181,7 +1269,7 @@ export function Model3DGeneration() {
                         </button>
                         {showResolutionSelect && (
                           <div className="absolute bottom-[calc(100%+8px)] right-0 min-w-[130px] bg-background border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-                            {[{v:"512",l:"512³"},{v:"1024",l:"1024³"},{v:"1536",l:"1536³"},{v:"1536Pro",l:"1536³ Pro"}].map(o => (
+                            {[{ v: "512", l: "512³" }, { v: "1024", l: "1024³" }, { v: "1536", l: "1536³" }, { v: "1536Pro", l: "1536³ Pro" }].map(o => (
                               <button key={o.v} onClick={() => { setResolution(o.v as ModelResolution); setShowResolutionSelect(false) }}
                                 className={cn("w-full text-left px-3 py-2 text-xs transition-colors", resolution === o.v ? "bg-muted text-foreground font-medium" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
                               >{o.l}</button>
@@ -1207,6 +1295,17 @@ export function Model3DGeneration() {
           </div>
         </div>
       </div>
+
+      {/* ─── Import to Project Popup ─── */}
+      {importPopup && (
+        <ImportToProjectPopup
+          isOpen={importPopup.isOpen}
+          onClose={() => setImportPopup(null)}
+          assetUrl={importPopup.url}
+          assetType={importPopup.type}
+          assetName={importPopup.name}
+        />
+      )}
     </div>
   )
 }

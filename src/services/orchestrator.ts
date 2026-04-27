@@ -1,38 +1,41 @@
 /**
- * Orchestrator Service
- * 
- * Uses Gemini 2.5 Flash as a lightweight intent classifier to route
+ * Uses the smart Gemini router to classify intents and route
  * user messages to the optimal model:
  * 
- * - general → Gemini 2.5 Flash (existing gemini.ts)
- * - advanced_coding → gpt-5.1-codex-max (ai.cc)
- * - advanced_reasoning → gemini-2.5-pro (ai.cc)
+ * - general        → Gemini (via smart router / standard SDK)
+ * - light_coding   → Gemini 3 Flash (via smart router / standard SDK)
+ * - advanced_coding → gemini-3.1-pro (Hyperreal) — only for genuinely complex tasks
+ * - advanced_reasoning → gemini-3.1-pro (Hyperreal) — deep analysis / architecture
+ *
+ * IMPORTANT: light_coding now routes through the standard Gemini SDK (not Hyperreal)
+ * to avoid CORS issues and reduce latency for simple code changes.
  */
 
-import { GoogleGenerativeAI } from "@google/generative-ai"
+import { ThinkingLevel } from "@google/genai"
 import { getApiKeys } from "../lib/apiFallback"
-import { sendMessageToAiccStream, type AiccMessage } from "./aicc"
+import { sendMessageToHyperrealStream, type HyperrealMessage } from "./hyperreal"
+import { withSmartRoute, type SmartRouteResult } from "./geminiSmartRouter"
 
 const GEMINI_API_KEYS = getApiKeys("VITE_GEMINI_API_KEY")
 
-// The system prompt from gemini.ts — we re-import the concept here
-// but the actual SYSTEM_PROMPT is injected by ChatInterface into the messages array
 const CLASSIFIER_PROMPT = `You are an intent classifier. Classify the user's LATEST message into exactly one category:
 
 - "general": casual chat, greetings, simple questions, image analysis, multimodal conversations, basic coding help, simple explanations, game design discussion, asset descriptions, simple file operations
+- "light_coding": fast, light, or small changes in code, minor refactoring, adding comments, fixing simple syntax errors, or writing small isolated functions, creating/editing a few files with straightforward content
 - "advanced_coding": complex game engine code, writing full game systems, shaders, physics engines, multiplayer networking code, complex algorithms, debugging intricate code issues, writing complete classes/modules with 50+ lines
 - "advanced_reasoning": deep system architecture design, multi-step project planning, complex research analysis, database schema design, scaling strategies, detailed technical comparisons, comprehensive game design documents
 
 IMPORTANT RULES:
 1. Default to "general" if unsure - it's the safest choice
 2. Only use "advanced_coding" for genuinely complex coding tasks, NOT simple code snippets
-3. Only use "advanced_reasoning" for deep planning/analysis, NOT simple questions about architecture
-4. Short messages, questions, and conversational messages are ALWAYS "general"
-5. Messages with images attached are ALWAYS "general"
+3. Use "light_coding" for brief, fast, or minor code edits and code suggestions
+4. Only use "advanced_reasoning" for deep planning/analysis, NOT simple questions about architecture
+5. Short messages, questions, and conversational messages are ALWAYS "general" (unless explicitly asking for a quick code change, which is "light_coding")
+6. Messages with images attached are ALWAYS "general"
 
 Reply with ONLY the category name, nothing else.`
 
-export type OrchestratorIntent = "general" | "advanced_coding" | "advanced_reasoning"
+export type OrchestratorIntent = "general" | "light_coding" | "advanced_coding" | "advanced_reasoning"
 
 export interface ModelSwitchInfo {
   intent: OrchestratorIntent
@@ -41,48 +44,112 @@ export interface ModelSwitchInfo {
 }
 
 /**
- * Classify user intent using Gemini 2.5 Flash (fast, cheap call)
+ * Classify user intent using heuristic keyword matching.
+ * Keeps it fast and avoids an extra API call for classification.
  */
 export async function classifyIntent(
   userMessage: string,
   hasImages: boolean = false
 ): Promise<OrchestratorIntent> {
-  // Short-circuit: if message has images, always use general
   if (hasImages) {
     console.log("[Orchestrator] Has images → general")
     return "general"
   }
 
-  // Short-circuit: very short messages are always general
-  if (userMessage.length < 50) {
+  const text = userMessage.toLowerCase()
+
+  // Very short messages are always general
+  if (text.length < 15) {
     console.log("[Orchestrator] Short message → general")
     return "general"
   }
 
-  if (GEMINI_API_KEYS.length === 0) {
-    console.warn("[Orchestrator] No Gemini API keys, defaulting to general")
-    return "general"
+  // Advanced reasoning triggers — must be genuinely complex multi-step planning
+  const reasoningKeywords = [
+    "design the entire architecture",
+    "comprehensive design document",
+    "database schema design",
+    "scaling strategy for",
+    "detailed technical comparison",
+    "system design for",
+    "multi-step project plan",
+  ]
+  const hasReasoningKeyword = reasoningKeywords.some(kw => text.includes(kw))
+  const hasReasoningComplexityHint =
+    text.includes("tradeoff") ||
+    text.includes("trade-off") ||
+    text.includes("pros and cons") ||
+    text.includes("step by step architecture")
+  if (hasReasoningKeyword && hasReasoningComplexityHint) {
+    console.log("[Orchestrator] Heuristic match → advanced_reasoning")
+    return "advanced_reasoning"
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEYS[0])
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
-
-    const result = await model.generateContent([
-      { text: CLASSIFIER_PROMPT },
-      { text: `User message: "${userMessage}"` },
-    ])
-
-    const response = result.response.text().trim().toLowerCase()
-
-    // Parse response
-    if (response.includes("advanced_coding")) return "advanced_coding"
-    if (response.includes("advanced_reasoning")) return "advanced_reasoning"
-    return "general"
-  } catch (error) {
-    console.warn("[Orchestrator] Classification failed, defaulting to general:", error)
-    return "general"
+  // Advanced coding triggers — genuinely complex multi-file systems
+  const advCodingKeywords = [
+    "multiplayer networking",
+    "physics engine",
+    "write a complete",
+    "full game system",
+    "complex algorithm",
+    "shader code",
+    "game engine code",
+    "implement the entire",
+    "build the full",
+    "write all the",
+  ]
+  const hasAdvancedCodingKeyword = advCodingKeywords.some(kw => text.includes(kw))
+  const hasAdvancedCodingScopeHint =
+    text.includes("multi-file") ||
+    text.includes("multiple files") ||
+    text.includes("from scratch") ||
+    text.includes("end to end")
+  if (hasAdvancedCodingKeyword && hasAdvancedCodingScopeHint) {
+    console.log("[Orchestrator] Heuristic match → advanced_coding")
+    return "advanced_coding"
   }
+
+  // Light coding triggers — simple file operations, quick edits, minor code
+  const lightCodingKeywords = [
+    "create file",
+    "edit file",
+    "update file",
+    "modify file",
+    "add a function",
+    "fix the bug",
+    "fix this",
+    "refactor",
+    "write a function",
+    "write a script",
+    "add code",
+    "update the code",
+    "change the code",
+    "implement",
+    "add a method",
+    "create a class",
+    "write code",
+  ]
+  // Only match light_coding if the message is reasonably coding-focused
+  // Avoid triggering on very casual mentions of these words
+  if (lightCodingKeywords.some(kw => text.includes(kw))) {
+    console.log("[Orchestrator] Heuristic match → light_coding")
+    return "light_coding"
+  }
+
+  // Generic code-related words — still route to light_coding (handled by Gemini SDK)
+  const genericCodeWords = ["code", "function", "bug", "error", "script"]
+  const hasCodeContext = genericCodeWords.some(w => {
+    // Must be a whole word, not part of another word
+    const regex = new RegExp(`\\b${w}\\b`, "i")
+    return regex.test(text)
+  })
+  if (hasCodeContext && text.length > 30) {
+    console.log("[Orchestrator] Generic code context → light_coding")
+    return "light_coding"
+  }
+
+  console.log("[Orchestrator] Defaulting to general")
+  return "general"
 }
 
 /**
@@ -90,38 +157,45 @@ export async function classifyIntent(
  */
 function getModelInfo(intent: OrchestratorIntent): ModelSwitchInfo {
   switch (intent) {
+    case "light_coding":
+      return {
+        intent,
+        modelName: "gemini-2.5-flash-lite",
+        displayName: "Gemini 2.5 Flash Lite",
+      }
     case "advanced_coding":
       return {
         intent,
-        modelName: "gpt-5.1-codex-max",
-        displayName: "GPT-5.1 Codex Max (Advanced Coding)",
+        modelName: "gemini-3.1-pro",
+        displayName: "Gemini 3.1 Pro (Advanced Coding)",
       }
     case "advanced_reasoning":
       return {
         intent,
-        modelName: "gemini-2.5-pro",
-        displayName: "Gemini 2.5 Pro (Advanced Reasoning)",
+        modelName: "gemini-3.1-pro",
+        displayName: "Gemini 3.1 Pro (Advanced Reasoning)",
       }
     case "general":
     default:
       return {
         intent: "general",
-        modelName: "gemini-2.5-flash",
-        displayName: "Gemini 2.5 Flash",
+        modelName: "gemini-3.1-flash-lite-preview",
+        displayName: "Gemini 3.1 Flash Lite Preview",
       }
   }
 }
 
 /**
- * Convert Gemini-format messages to ai.cc OpenAI-format messages
+ * Convert Gemini-format messages to Hyperreal OpenAI-format messages
  */
-function convertToAiccMessages(
+function convertToHyperrealMessages(
   geminiMessages: Array<{
     role: "user" | "model"
     parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>
   }>
-): AiccMessage[] {
-  const aiccMessages: AiccMessage[] = []
+): HyperrealMessage[] {
+  const hyperrealMessages: HyperrealMessage[] = []
+  let systemInjected = false
 
   for (const msg of geminiMessages) {
     const textParts = msg.parts
@@ -130,26 +204,46 @@ function convertToAiccMessages(
       .join("\n")
 
     if (textParts) {
-      aiccMessages.push({
+      // Preserve system instructions when routing to Hyperreal.
+      // ChatInterface prefixes them with "SYSTEM INSTRUCTION: ...".
+      if (
+        !systemInjected &&
+        msg.role === "user" &&
+        textParts.startsWith("SYSTEM INSTRUCTION:")
+      ) {
+        hyperrealMessages.push({
+          role: "system",
+          content: textParts.replace(/^SYSTEM INSTRUCTION:\s*/i, "").trim(),
+        })
+        systemInjected = true
+        continue
+      }
+
+      hyperrealMessages.push({
         role: msg.role === "model" ? "assistant" : "user",
         content: textParts,
       })
     }
   }
 
-  return aiccMessages
+  return hyperrealMessages
 }
 
 /**
  * Route a message through the orchestrator with streaming.
  * 
- * 1. Classifies intent using Gemini 2.5 Flash
- * 2. If general → delegates to Gemini streaming (caller should use existing gemini.ts)
- * 3. If advanced → streams from ai.cc
+ * 1. Classifies intent using heuristic keywords (fast, no API call)
+ * 2. If general or light_coding → returns intent so caller uses Gemini SDK directly
+ * 3. If advanced_coding or advanced_reasoning → streams from Hyperreal (gemini-3.1-pro)
+ * 
+ * DESIGN DECISION: light_coding now returns "general" to the caller so it routes
+ * through the standard Gemini SDK. This avoids CORS issues with Hyperreal for
+ * simple tasks and gives faster response times. Only genuinely complex tasks
+ * (advanced_coding, advanced_reasoning) go through Hyperreal.
  * 
  * @param geminiMessages - Messages in Gemini format (same as sendMessageToGeminiStream)
  * @param onModelSwitch - Optional callback when a non-default model is selected
- * @returns AsyncGenerator yielding text chunks, or null if intent is "general" (caller should fallback to gemini.ts)
+ * @returns AsyncGenerator yielding text chunks, or intent if caller should use gemini.ts
  */
 export async function* routeMessageStream(
   geminiMessages: Array<{
@@ -177,20 +271,27 @@ export async function* routeMessageStream(
     onModelSwitch(modelInfo)
   }
 
-  // If general, return intent so caller can use existing gemini.ts
-  if (intent === "general") {
+  // general AND light_coding both route through Gemini SDK (caller handles it)
+  // This avoids CORS issues and is faster for simple tasks
+  if (intent === "general" || intent === "light_coding") {
     return intent
   }
 
-  // Route to ai.cc for advanced models
-  const aiccModel = intent === "advanced_coding" ? "gpt-5.1-codex-max" : "gemini-2.5-pro"
-  const aiccMessages = convertToAiccMessages(geminiMessages)
+  // Only advanced_coding and advanced_reasoning route to Hyperreal (gemini-3.1-pro)
+  const hyperrealModel = "gemini-3.1-pro"
+  const hyperrealMessages = convertToHyperrealMessages(geminiMessages)
 
-  for await (const chunk of sendMessageToAiccStream(aiccModel, aiccMessages)) {
-    yield chunk
+  try {
+    for await (const chunk of sendMessageToHyperrealStream(hyperrealModel, hyperrealMessages)) {
+      yield chunk
+    }
+    return intent
+  } catch (error) {
+    // Graceful fallback: if Hyperreal is unavailable (CORS, billing, quota, network, etc.),
+    // let caller transparently route back to standard Gemini flow.
+    console.warn(`[Orchestrator] Hyperreal routing failed for ${intent}, falling back to general:`, error)
+    return "general"
   }
-
-  return intent
 }
 
 export { getModelInfo }

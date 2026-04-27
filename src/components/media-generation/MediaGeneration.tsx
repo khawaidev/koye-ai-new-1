@@ -1,37 +1,35 @@
 import * as React from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { Plus, Image as ImageIcon, Film, ChevronLeft, ChevronRight, X, RectangleHorizontal, RectangleVertical, Square, Search, Download, SlidersHorizontal, ChevronDown, RotateCcw, Loader2, ExternalLink, Globe, Volume2, VolumeX, Clock } from "lucide-react"
-import { searchBingImages, downloadImageSafe, type BingImageResult } from "../../services/bingImageSearch"
+import { Plus, Image as ImageIcon, Film, ChevronLeft, ChevronRight, X, RectangleHorizontal, RectangleVertical, Square, Search, Download, SlidersHorizontal, ChevronDown, RotateCcw, Loader2, ExternalLink, Globe, Volume2, VolumeX, Clock, Pencil, FolderOpen, FolderInput, Sparkles, File as FileIcon, FolderClosed } from "lucide-react"
+import { searchBingImages, downloadImageSafe, downloadImageAsBlob, type BingImageResult } from "../../services/bingImageSearch"
 import { FILTER_GROUPS, DISCOVER_GALLERY, type FilterGroup } from "../../data/discoverGallery"
 import { useAuth } from "../../hooks/useAuth"
 import { saveImageToStorage } from "../../lib/imageStorage"
 import { uuidv4 } from "../../lib/uuid"
 import { saveImage, saveVideo } from "../../services/multiDbDataService"
+import { saveSingleProjectFile } from "../../services/projectFiles"
 import {
   generateImageWithRunway,
   generateVideoWithRunway,
+  editImageWithRunway,
+  editVideoWithRunway,
   type RunwayImageModel,
   type RunwayRatio,
   type RunwayVideoModel,
   type RunwayVideoRatio,
 } from "../../services/runwayml"
+import { getAllUserAssets, type AssetMetadata } from "../../services/assetService"
 import { uploadFileToDataDb } from "../../services/supabase"
 import { useAppStore } from "../../store/useAppStore"
+import { useTaskStore } from "../../store/useTaskStore"
+import { checkRateLimit, recordRequest, getRateLimitMessage } from "../../services/rateLimiter"
 import { ImageGenerationLoader } from "../ui/ImageGenerationLoader"
 import { VideoGenerationLoader } from "../ui/VideoGenerationLoader"
+import { ImportToProjectPopup } from "../ui/ImportToProjectPopup"
+import { useToast } from "../ui/toast"
 
-import sumiImg from "../../../images/sumi.png"
-import realisticImg from "../../../images/realistic.png"
-import threeDAnimeImg from "../../../images/3d-anime.png"
-import twoDAnimeImg from "../../../images/2d-anime.png"
-import semiRealisticImg from "../../../images/semi-realistic.png"
-import cartoonImg from "../../../images/cartoon.png"
-import pixelImg from "../../../images/pixel.png"
-import gachaImg from "../../../images/gacha.png"
-import mangaImg from "../../../images/manga.png"
-import lowpolyImg from "../../../images/lowpoly.png"
-import sketchImg from "../../../images/sketch.png"
+// Images are now served from the /public/images directory
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -40,17 +38,17 @@ type GenerationType = "image" | "video"
 // ─── Art Style Definitions ──────────────────────────────────────────────────
 
 const ART_STYLES = [
-  { id: "ink", name: "Ink / Sumi-e", tags: "ink wash, sumi-e, brush strokes, minimal, negative space", image: sumiImg },
-  { id: "realistic", name: "Realistic", tags: "photorealistic, PBR, cinematic, ultra-detailed", image: realisticImg },
-  { id: "3d-anime", name: "3D Anime", tags: "3d anime, semi realistic shading, vibrant", image: threeDAnimeImg },
-  { id: "2d-anime", name: "2D Anime", tags: "2d anime, cel shading, line art, vibrant", image: twoDAnimeImg },
-  { id: "semi-realistic", name: "Semi-Realistic", tags: "stylized realism, hero design, painterly", image: semiRealisticImg },
-  { id: "cartoon", name: "Cartoon", tags: "cartoon, exaggerated, vibrant, playful", image: cartoonImg },
-  { id: "pixel", name: "Pixel Art", tags: "pixel, 8-bit, 16-bit, retro", image: pixelImg },
-  { id: "gacha", name: "Gacha / Anime", tags: "anime polished, gacha, glossy, high detail", image: gachaImg },
-  { id: "comic", name: "Manga / Comic", tags: "comic, inked, bold outline, cel shading", image: mangaImg },
-  { id: "lowpoly", name: "Low Poly", tags: "low poly, geometric, simple", image: lowpolyImg },
-  { id: "sketch", name: "Sketch / Concept", tags: "rough lines, early-stage look", image: sketchImg },
+  { id: "ink", name: "Ink / Sumi-e", tags: "ink wash, sumi-e, brush strokes, minimal, negative space", image: "/images/sumi.png" },
+  { id: "realistic", name: "Realistic", tags: "photorealistic, PBR, cinematic, ultra-detailed", image: "/images/realistic.png" },
+  { id: "3d-anime", name: "3D Anime", tags: "3d anime, semi realistic shading, vibrant", image: "/images/3d-anime.png" },
+  { id: "2d-anime", name: "2D Anime", tags: "2d anime, cel shading, line art, vibrant", image: "/images/2d-anime.png" },
+  { id: "semi-realistic", name: "Semi-Realistic", tags: "stylized realism, hero design, painterly", image: "/images/semi-realistic.png" },
+  { id: "cartoon", name: "Cartoon", tags: "cartoon, exaggerated, vibrant, playful", image: "/images/cartoon.png" },
+  { id: "pixel", name: "Pixel Art", tags: "pixel, 8-bit, 16-bit, retro", image: "/images/pixel.png" },
+  { id: "gacha", name: "Gacha / Anime", tags: "anime polished, gacha, glossy, high detail", image: "/images/gacha.png" },
+  { id: "comic", name: "Manga / Comic", tags: "comic, inked, bold outline, cel shading", image: "/images/manga.png" },
+  { id: "lowpoly", name: "Low Poly", tags: "low poly, geometric, simple", image: "/images/lowpoly.png" },
+  { id: "sketch", name: "Sketch / Concept", tags: "rough lines, early-stage look", image: "/images/sketch.png" },
 ]
 
 // Placeholder inspiration items (images/videos that have been generated)
@@ -93,11 +91,33 @@ const VIDEO_RATIOS: { value: RunwayVideoRatio; label: string }[] = [
   { value: "960:960", label: "1:1" },
 ]
 
+// ─── Edit Image Ratios (same as gen ratios) ──────────────────────────────────
+
+const EDIT_IMAGE_RATIOS: { value: string; label: string }[] = [
+  { value: "1024:1024", label: "1:1" },
+  { value: "1360:768", label: "16:9" },
+  { value: "720:1280", label: "9:16" },
+  { value: "1920:1080", label: "HD" },
+  { value: "1080:1920", label: "HD Portrait" },
+]
+
+const EDIT_IMAGE_MODELS: { value: RunwayImageModel; label: string }[] = [
+  { value: "gen4_image_turbo", label: "gen4_image_turbo" },
+  { value: "gen4_image", label: "gen4_image" },
+  { value: "gemini_2.5_flash", label: "gemini_2.5_flash" },
+]
+
+type GalleryTab = "discover" | "generated"
+type MentionTarget = "generate" | "edit"
+type MentionItem = { path: string; name: string; type: "file" | "folder" }
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function MediaGeneration() {
   const { user, isAuthenticated } = useAuth()
-  const { currentProject, images, addImage, generatedVideos, addGeneratedVideo } = useAppStore()
+  const { currentProject, generatedFiles, images, addImage, generatedVideos, addGeneratedVideo, addGeneratedFile, setStage } = useAppStore()
+  const { addTask, updateTask } = useTaskStore()
+  const { addToast } = useToast()
 
   // ── Core state ──
   const [genType, setGenType] = useState<GenerationType>("image")
@@ -126,6 +146,33 @@ export function MediaGeneration() {
   const [showRatioSelect, setShowRatioSelect] = useState(false)
   const [showModelSelect, setShowModelSelect] = useState(false)
 
+  // ── Gallery Tab state ──
+  const [galleryTab, setGalleryTab] = useState<GalleryTab>("discover")
+
+  // ── Generated Assets state ──
+  const [userAssets, setUserAssets] = useState<AssetMetadata[]>([])
+  const [isLoadingAssets, setIsLoadingAssets] = useState(false)
+  const [assetsLoaded, setAssetsLoaded] = useState(false)
+
+  // ── Asset Edit state ──
+  const [isEditMode, setIsEditMode] = useState(false)
+  const [editPrompt, setEditPrompt] = useState("")
+  const [isEditing, setIsEditing] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+  const [editImageModel, setEditImageModel] = useState<RunwayImageModel>("gen4_image_turbo")
+  const [editImageRatio, setEditImageRatio] = useState<string>("1024:1024")
+  const [editImageSeed, setEditImageSeed] = useState<string>("70943470")
+  const [showEditModelSelect, setShowEditModelSelect] = useState(false)
+  const [showEditRatioSelect, setShowEditRatioSelect] = useState(false)
+  const [editReferenceImage, setEditReferenceImage] = useState<File | null>(null)
+  const [editReferenceImagePreview, setEditReferenceImagePreview] = useState<string | null>(null)
+  const [showMentionSuggestions, setShowMentionSuggestions] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState("")
+  const [mentionTarget, setMentionTarget] = useState<MentionTarget | null>(null)
+  const [mentionStart, setMentionStart] = useState<number | null>(null)
+  const [mentionEnd, setMentionEnd] = useState<number | null>(null)
+  const [selectedMentionIndex, setSelectedMentionIndex] = useState(0)
+
   // ── Filter state ──
   const [showFilterPanel, setShowFilterPanel] = useState(false)
   const [pendingFilters, setPendingFilters] = useState<ActiveFilters>({})
@@ -133,15 +180,59 @@ export function MediaGeneration() {
   const [searchQuery, setSearchQuery] = useState("")
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
   const filterPanelRef = useRef<HTMLDivElement>(null)
+  const promptTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const editPromptTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const mentionSuggestionsRef = useRef<HTMLDivElement>(null)
+
+  // ── Import popup state ──
+  const [importPopup, setImportPopup] = useState<{ isOpen: boolean; url: string; type: "image" | "video"; name: string } | null>(null)
 
   // ── Bing Image Search state ──
-  const [bingResults, setBingResults] = useState<BingImageResult[]>([])
+  const [bingResults, setBingResults] = useState<BingImageResult[]>(() => {
+    try {
+      const saved = localStorage.getItem("koye_bing_results")
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
   const [isBingSearching, setIsBingSearching] = useState(false)
   const [bingSearchError, setBingSearchError] = useState<string | null>(null)
-  const [lastBingQuery, setLastBingQuery] = useState("")
+  const [lastBingQuery, setLastBingQuery] = useState(() => {
+    return localStorage.getItem("koye_bing_query") || ""
+  })
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [isImportingToProject, setIsImportingToProject] = useState(false)
+  const [importingBingId, setImportingBingId] = useState<string | null>(null)
+
+  // Persist search results and query to localStorage
+  useEffect(() => {
+    localStorage.setItem("koye_bing_results", JSON.stringify(bingResults))
+  }, [bingResults])
+
+  useEffect(() => {
+    localStorage.setItem("koye_bing_query", lastBingQuery)
+  }, [lastBingQuery])
   // Track whether we are in "search results" mode (Discover hidden)
   const hasActiveSearch = bingResults.length > 0 || isBingSearching
+
+  // ── Fetch user generated assets when switching to Generated tab ──
+  useEffect(() => {
+    if (galleryTab === "generated" && !assetsLoaded && user && isAuthenticated) {
+      setIsLoadingAssets(true)
+      getAllUserAssets(user.id)
+        .then((assets) => {
+          // Only show image and video assets
+          const mediaAssets = assets.filter(a => a.assetType === "image" || a.assetType === "video")
+          setUserAssets(mediaAssets)
+          setAssetsLoaded(true)
+        })
+        .catch((err) => {
+          console.error("Failed to fetch user assets:", err)
+        })
+        .finally(() => setIsLoadingAssets(false))
+    }
+  }, [galleryTab, assetsLoaded, user, isAuthenticated])
 
   // ── Close dropdowns on outside click ──
   useEffect(() => {
@@ -150,6 +241,11 @@ export function MediaGeneration() {
       if (!target.closest('.media-dropdown-element')) {
         setShowRatioSelect(false)
         setShowModelSelect(false)
+        setShowEditModelSelect(false)
+        setShowEditRatioSelect(false)
+      }
+      if (!target.closest('.media-mention-suggestions') && !target.closest('.media-mention-input')) {
+        setShowMentionSuggestions(false)
       }
       if (showFilterPanel && filterPanelRef.current && !filterPanelRef.current.contains(target) && !target.closest('.filter-toggle-btn')) {
         setShowFilterPanel(false)
@@ -217,6 +313,103 @@ export function MediaGeneration() {
     await downloadImageSafe(img.originalUrl || img.thumbnailUrl, `${safeName}.${ext}`)
     setDownloadingId(null)
   }, [])
+
+  const handleBingImportToProject = useCallback(async (e: React.MouseEvent, img: BingImageResult) => {
+    e.stopPropagation()
+    if (!currentProject || !user) {
+      addToast({
+        title: "Project Required",
+        description: "Connect to a project to import assets.",
+        variant: "warning",
+      })
+      return
+    }
+
+    setImportingBingId(img.id)
+    setIsImportingToProject(true)
+    try {
+      const sourceUrl = img.originalUrl || img.thumbnailUrl
+      const blob = await downloadImageAsBlob(sourceUrl)
+      const ext = blob.type.includes("jpeg")
+        ? "jpg"
+        : blob.type.includes("webp")
+          ? "webp"
+          : blob.type.includes("gif")
+            ? "gif"
+            : "png"
+      const safeName = img.title.replace(/[^a-zA-Z0-9]/g, "-").substring(0, 40).replace(/-+$/, "") || `bing-${Date.now()}`
+      const fileName = `${safeName}.${ext}`
+      const filePath = `images/${fileName}`
+
+      const file = new File([blob], fileName, { type: blob.type || "image/png" })
+      const imageUrl = await uploadImageToStorage(file, user.id, uuidv4())
+      await saveSingleProjectFile(currentProject.id, user.id, currentProject.name, filePath, imageUrl, null)
+      addGeneratedFile(filePath, imageUrl)
+
+      addToast({
+        title: "Imported",
+        description: `Added to ${currentProject.name}/images`,
+        variant: "success",
+      })
+    } catch (err) {
+      console.error("[MediaGen] Failed to import Bing image:", err)
+      addToast({
+        title: "Import Failed",
+        description: err instanceof Error ? err.message : "Failed to import image to project",
+        variant: "error",
+      })
+    } finally {
+      setIsImportingToProject(false)
+      setImportingBingId(null)
+    }
+  }, [addGeneratedFile, addToast, currentProject, user])
+
+  const handleSaveCurrentImageToProject = useCallback(async () => {
+    if (!maximizedMedia || maximizedMedia.type !== "image") return
+    if (!currentProject || !user) {
+      addToast({
+        title: "Project Required",
+        description: "Connect to a project to save this image.",
+        variant: "warning",
+      })
+      return
+    }
+
+    setIsImportingToProject(true)
+    try {
+      const blob = await downloadImageAsBlob(maximizedMedia.url)
+      const ext = blob.type.includes("jpeg")
+        ? "jpg"
+        : blob.type.includes("webp")
+          ? "webp"
+          : blob.type.includes("gif")
+            ? "gif"
+            : "png"
+      const safeName = maximizedMedia.name.replace(/[^a-zA-Z0-9]/g, "-").substring(0, 40).replace(/-+$/, "") || `image-${Date.now()}`
+      const fileName = `${safeName}.${ext}`
+      const filePath = `images/${fileName}`
+
+      const file = new File([blob], fileName, { type: blob.type || "image/png" })
+      const imageUrl = await uploadImageToStorage(file, user.id, uuidv4())
+      await saveSingleProjectFile(currentProject.id, user.id, currentProject.name, filePath, imageUrl, null)
+      addGeneratedFile(filePath, imageUrl)
+
+      addToast({
+        title: "Saved to Project",
+        description: `Added to ${currentProject.name}/images`,
+        variant: "success",
+      })
+    } catch (err) {
+      console.error("[MediaGen] Failed to save selected image to project:", err)
+      addToast({
+        title: "Save Failed",
+        description: err instanceof Error ? err.message : "Failed to save image to project",
+        variant: "error",
+      })
+    } finally {
+      setIsImportingToProject(false)
+    }
+  }, [addGeneratedFile, addToast, currentProject, maximizedMedia, user])
 
   // ── Filter helpers ──
   const togglePendingFilter = (groupId: string, value: string) => {
@@ -321,12 +514,211 @@ export function MediaGeneration() {
     setAttachedImagePreview(null)
   }
 
+  const handleEditReferenceImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (editReferenceImagePreview) URL.revokeObjectURL(editReferenceImagePreview)
+    setEditReferenceImage(file)
+    setEditReferenceImagePreview(URL.createObjectURL(file))
+  }
+
+  const clearEditReferenceImage = () => {
+    if (editReferenceImagePreview) URL.revokeObjectURL(editReferenceImagePreview)
+    setEditReferenceImage(null)
+    setEditReferenceImagePreview(null)
+  }
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (attachedImagePreview) URL.revokeObjectURL(attachedImagePreview)
+      if (editReferenceImagePreview) URL.revokeObjectURL(editReferenceImagePreview)
     }
-  }, [attachedImagePreview])
+  }, [attachedImagePreview, editReferenceImagePreview])
+
+  const blobToBase64Data = (blob: Blob): Promise<{ base64: string; mimeType: string }> => {
+    const reader = new FileReader()
+    return new Promise((resolve) => {
+      reader.onloadend = () => {
+        const result = reader.result as string
+        const [prefix, encoded] = result.split(",")
+        const mimeMatch = prefix.match(/^data:(.*?);base64$/)
+        resolve({
+          base64: encoded,
+          mimeType: mimeMatch?.[1] || blob.type || "image/png",
+        })
+      }
+      reader.readAsDataURL(blob)
+    })
+  }
+
+  const availableMentionFiles = useMemo<MentionItem[]>(() => {
+    if (!currentProject || !generatedFiles) return []
+    const fileKeys = Object.keys(generatedFiles)
+    const files = fileKeys.map((path) => ({
+      path,
+      name: path.split("/").pop() || path,
+      type: "file" as const,
+    }))
+    const folders = new Set<string>()
+    fileKeys.forEach((path) => {
+      const parts = path.split("/")
+      for (let i = 0; i < parts.length - 1; i++) {
+        folders.add(parts.slice(0, i + 1).join("/"))
+      }
+    })
+    const folderItems = Array.from(folders).map((path) => ({
+      path,
+      name: path.split("/").pop() || path,
+      type: "folder" as const,
+    }))
+    return [...folderItems, ...files]
+  }, [currentProject, generatedFiles])
+
+  const filteredMentionFiles = useMemo(() => {
+    if (!mentionQuery) return availableMentionFiles
+    const search = mentionQuery.toLowerCase()
+    return availableMentionFiles.filter(
+      (item) => item.path.toLowerCase().includes(search) || item.name.toLowerCase().includes(search)
+    )
+  }, [availableMentionFiles, mentionQuery])
+
+  const closeMentionSuggestions = () => {
+    setShowMentionSuggestions(false)
+    setMentionQuery("")
+    setMentionTarget(null)
+    setMentionStart(null)
+    setMentionEnd(null)
+    setSelectedMentionIndex(0)
+  }
+
+  const updateMentionState = (target: MentionTarget, value: string, caret: number) => {
+    if (!currentProject) {
+      closeMentionSuggestions()
+      return
+    }
+    const beforeCursor = value.slice(0, caret)
+    const atIndex = beforeCursor.lastIndexOf("@")
+    if (atIndex === -1) {
+      closeMentionSuggestions()
+      return
+    }
+    const query = beforeCursor.slice(atIndex + 1)
+    if (/\s/.test(query)) {
+      closeMentionSuggestions()
+      return
+    }
+    setMentionTarget(target)
+    setMentionStart(atIndex)
+    setMentionEnd(caret)
+    setMentionQuery(query)
+    setShowMentionSuggestions(true)
+    setSelectedMentionIndex(0)
+  }
+
+  const insertMentionIntoTarget = (item: MentionItem) => {
+    if (mentionStart === null || mentionEnd === null || !mentionTarget) return
+    const targetRef = mentionTarget === "generate" ? promptTextareaRef : editPromptTextareaRef
+    const setter = mentionTarget === "generate" ? setPrompt : setEditPrompt
+    const currentValue = mentionTarget === "generate" ? prompt : editPrompt
+    const nextValue = `${currentValue.slice(0, mentionStart)}@${item.path} ${currentValue.slice(mentionEnd)}`
+    setter(nextValue)
+    closeMentionSuggestions()
+    setTimeout(() => {
+      const el = targetRef.current
+      if (!el) return
+      const cursor = mentionStart + item.path.length + 2
+      el.focus()
+      el.setSelectionRange(cursor, cursor)
+    }, 0)
+  }
+
+  const buildMentionTag = (raw: string, fallbackIndex: number) => {
+    const base = raw
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+    const withFallback = base || `ref${fallbackIndex}`
+    if (withFallback.length < 3) return `${withFallback}ref`.slice(0, 16)
+    return withFallback.slice(0, 16)
+  }
+
+  const getMentionedPaths = (text: string): string[] => {
+    const matches = Array.from(text.matchAll(/@([^\s]+)/g)).map((m) => m[1].replace(/[),.;!?]+$/, ""))
+    return Array.from(new Set(matches))
+  }
+
+  const resolveMentionedReferenceImages = useCallback(async (text: string) => {
+    if (!currentProject || !generatedFiles) return [] as Array<{ base64: string; mimeType?: string; tag?: string }>
+    const mentioned = getMentionedPaths(text)
+    const refs: Array<{ base64: string; mimeType?: string; tag?: string }> = []
+
+    for (let index = 0; index < mentioned.length; index++) {
+      if (refs.length >= 3) break
+      const mention = mentioned[index]
+      const directPath = generatedFiles[mention] ? mention : Object.keys(generatedFiles).find((p) => p.endsWith(`/${mention}`) || p === mention)
+      if (!directPath) continue
+      const value = generatedFiles[directPath]
+      if (!value) continue
+
+      const isImagePath = /\.(png|jpg|jpeg|webp|gif)$/i.test(directPath)
+      if (!isImagePath) continue
+
+      let source = value
+      if (!source.startsWith("http") && !source.startsWith("data:") && !source.startsWith("blob:")) {
+        const urlMatch = source.match(/\**URL:\**\s*(https?:\/\/[^\s\n*)]+)/i) || source.match(/# URL:\s*(https?:\/\/[^\s\n]+)/i)
+        if (urlMatch) source = urlMatch[1]
+      }
+
+      if (!source.startsWith("http") && !source.startsWith("data:") && !source.startsWith("blob:")) continue
+
+      try {
+        if (source.startsWith("data:")) {
+          const [prefix, encoded] = source.split(",")
+          const mimeMatch = prefix.match(/^data:(.*?);base64$/)
+          if (encoded) refs.push({ base64: encoded, mimeType: mimeMatch?.[1] || "image/png", tag: buildMentionTag(directPath.split("/").pop() || `ref${index + 1}`, index + 1) })
+          continue
+        }
+        const response = await fetch(source)
+        if (!response.ok) continue
+        const blob = await response.blob()
+        const converted = await blobToBase64Data(blob)
+        refs.push({
+          base64: converted.base64,
+          mimeType: converted.mimeType,
+          tag: buildMentionTag(directPath.split("/").pop() || `ref${index + 1}`, index + 1),
+        })
+      } catch (e) {
+        console.warn("[MediaGen] Failed to resolve mentioned reference:", mention, e)
+      }
+    }
+    return refs
+  }, [currentProject, generatedFiles])
+
+  const handleMentionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!showMentionSuggestions || filteredMentionFiles.length === 0) return false
+    if (e.key === "ArrowDown") {
+      e.preventDefault()
+      setSelectedMentionIndex((prev) => (prev < filteredMentionFiles.length - 1 ? prev + 1 : prev))
+      return true
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault()
+      setSelectedMentionIndex((prev) => (prev > 0 ? prev - 1 : 0))
+      return true
+    }
+    if (e.key === "Escape") {
+      e.preventDefault()
+      closeMentionSuggestions()
+      return true
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      insertMentionIntoTarget(filteredMentionFiles[selectedMentionIndex])
+      return true
+    }
+    return false
+  }
 
   // ── Upload helper ──
   const uploadImageToStorage = async (imageFile: File, userId: string, imageId: string): Promise<string> => {
@@ -385,6 +777,42 @@ export function MediaGeneration() {
       return
     }
 
+    // Rate limit check
+    const rateLimitService = genType === "image" ? "image-generation" : "image-generation" // video uses same limiter
+    const rateCheck = checkRateLimit(rateLimitService as any)
+    if (!rateCheck.allowed) {
+      const msg = getRateLimitMessage(rateLimitService as any, rateCheck.retryAfterMs)
+      setError(msg)
+      addToast({ title: "Rate Limit", description: msg, variant: "warning" })
+      return
+    }
+
+    // Record the request
+    recordRequest(rateLimitService as any)
+
+    // Create background task
+    const taskId = uuidv4()
+    const taskType = genType === "image" ? "text-to-image" as const : "text-to-video" as const
+    const assetName = prompt.trim().substring(0, 8)
+    addTask({
+      id: taskId,
+      type: taskType,
+      status: "running",
+      config: {},
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+      assetName,
+      assetType: genType === "image" ? "image" : "video",
+      prompt: prompt.trim(),
+    })
+
+    // Show "sent to background" toast
+    addToast({
+      title: "Task Started",
+      description: `${genType === "image" ? "Image" : "Video"} generation sent to background`,
+      variant: "info",
+    })
+
     setIsGenerating(true)
     setError(null)
 
@@ -395,9 +823,21 @@ export function MediaGeneration() {
       }
 
       if (genType === "image") {
+        const mentionReferences = await resolveMentionedReferenceImages(prompt.trim())
+        let uploadReference: { base64: string; mimeType?: string; tag?: string } | null = null
+        if (attachedImage) {
+          const uploaded = await blobToBase64Data(attachedImage)
+          uploadReference = {
+            base64: uploaded.base64,
+            mimeType: uploaded.mimeType,
+            tag: "upload",
+          }
+        }
+        const imageReferences = [uploadReference, ...mentionReferences].filter(Boolean) as Array<{ base64: string; mimeType?: string; tag?: string }>
         const imageUrl = await generateImageWithRunway(prompt.trim(), {
           model: imageModel,
           ratio: imageRatio,
+          referenceImages: imageReferences.length > 0 ? imageReferences : undefined,
         })
         const imageData = {
           id: uuidv4(),
@@ -409,6 +849,15 @@ export function MediaGeneration() {
         }
         addImage(imageData)
         setMaximizedMedia({ url: imageUrl, name: 'Generated Image', type: 'image' })
+
+        // Update task as completed
+        updateTask(taskId, { status: "completed", completedAt: Date.now(), assetUrl: imageUrl, resultUrl: imageUrl })
+        addToast({
+          title: "Image Ready",
+          description: "Your image has been generated",
+          variant: "success",
+          action: { label: "View", onClick: () => setStage("mediaGeneration") },
+        })
 
         // Save to DB
         if (isAuthenticated && user) {
@@ -440,6 +889,15 @@ export function MediaGeneration() {
         })
         setMaximizedMedia({ url: videoUrl, name: 'Generated Video', type: 'video' })
 
+        // Update task as completed
+        updateTask(taskId, { status: "completed", completedAt: Date.now(), assetUrl: videoUrl, resultUrl: videoUrl })
+        addToast({
+          title: "Video Ready",
+          description: "Your video has been generated",
+          variant: "success",
+          action: { label: "View", onClick: () => setStage("mediaGeneration") },
+        })
+
         // Save to DB
         if (isAuthenticated && user) {
           try {
@@ -452,7 +910,10 @@ export function MediaGeneration() {
       }
     } catch (err) {
       console.error("Error generating:", err)
-      setError(err instanceof Error ? err.message : "Failed to generate")
+      const errorMsg = err instanceof Error ? err.message : "Failed to generate"
+      setError(errorMsg)
+      updateTask(taskId, { status: "failed", error: errorMsg, completedAt: Date.now() })
+      addToast({ title: "Generation Failed", description: errorMsg, variant: "error" })
     } finally {
       setIsGenerating(false)
     }
@@ -475,6 +936,141 @@ export function MediaGeneration() {
     futuristic: "from-violet-700 to-cyan-400",
     medieval: "from-amber-900 to-yellow-700",
     tribal: "from-orange-900 to-amber-700",
+  }
+
+  // ── Handle Edit Asset ──
+  const handleEditAsset = async () => {
+    if (!editPrompt.trim() || !maximizedMedia) return
+    setIsEditing(true)
+    setEditError(null)
+
+    try {
+      if (maximizedMedia.type === 'image') {
+        // Image edit: fetch source image → convert to base64 → send to edit API.
+        // For external URLs (Bing search results from Pinterest, ArtStation, etc.),
+        // use the robust multi-proxy downloadImageAsBlob to handle CORS.
+        let blob: Blob
+        const isLocal = maximizedMedia.url.startsWith('/') ||
+                        maximizedMedia.url.includes('localhost') ||
+                        maximizedMedia.url.includes('.supabase.co') ||
+                        maximizedMedia.url.includes('.r2.dev') ||
+                        maximizedMedia.url.includes('.workers.dev') ||
+                        maximizedMedia.url.includes('r2.cloudflarestorage.com')
+
+        if (isLocal) {
+          // CORS-friendly — fetch directly
+          const response = await fetch(maximizedMedia.url)
+          if (!response.ok) throw new Error(`Failed to fetch image: HTTP ${response.status}`)
+          blob = await response.blob()
+        } else {
+          // External URL (Bing search result) — use robust multi-proxy download
+          console.log('[MediaGen] Downloading external image for edit via proxy...')
+          blob = await downloadImageAsBlob(maximizedMedia.url)
+        }
+
+        // Optionally upload to R2 as a temporary source so the edit API can
+        // receive a stable, accessible URL instead of a cross-origin one.
+        let sourceUrlForApi = maximizedMedia.url
+        if (!isLocal && user && isAuthenticated) {
+          try {
+            const { createAssetFromUrl } = await import('../../services/assetService')
+            // Use the blob URL for createAssetFromUrl — it will upload to R2
+            const blobUrl = URL.createObjectURL(blob)
+            const tempName = `temp_edit_src_${Date.now()}.png`
+            const tempAsset = await createAssetFromUrl(user.id, currentProject?.id || null, 'image', tempName, blobUrl)
+            URL.revokeObjectURL(blobUrl)
+            sourceUrlForApi = tempAsset.url
+            console.log('[MediaGen] Uploaded source image to R2 for edit API:', sourceUrlForApi)
+          } catch (uploadErr) {
+            console.warn('[MediaGen] Failed to upload source to R2, using blob directly:', uploadErr)
+            // Continue with blob-based base64 approach
+          }
+        }
+
+        // Convert source image to base64 for the edit API
+        const { base64, mimeType } = await blobToBase64Data(blob)
+
+        // Optional user-uploaded reference image (supports both default and search-result edits)
+        const mentionReferences = await resolveMentionedReferenceImages(editPrompt.trim())
+        let additionalReferenceImages: { base64: string; mimeType?: string; tag?: string }[] = [...mentionReferences]
+        if (editReferenceImage) {
+          const uploadedRef = await blobToBase64Data(editReferenceImage)
+          additionalReferenceImages = [{
+            base64: uploadedRef.base64,
+            mimeType: uploadedRef.mimeType,
+            tag: "reference",
+          }, ...additionalReferenceImages]
+        }
+
+        const editedUrl = await editImageWithRunway(editPrompt.trim(), base64, mimeType, {
+          model: editImageModel,
+          ratio: editImageRatio,
+          additionalReferenceImages: additionalReferenceImages.length > 0 ? additionalReferenceImages : undefined,
+        })
+
+        // Persist the edited result to R2
+        let finalEditedUrl = editedUrl
+        if (user && isAuthenticated) {
+          try {
+            const { createAssetFromUrl } = await import('../../services/assetService')
+            const editedName = `edited_${Date.now()}.png`
+            const savedAsset = await createAssetFromUrl(
+              user.id,
+              currentProject?.id || null,
+              'image',
+              editedName,
+              editedUrl
+            )
+            finalEditedUrl = savedAsset.url
+            console.log('[MediaGen] Saved edited image to R2:', finalEditedUrl)
+          } catch (saveErr) {
+            console.warn('[MediaGen] Failed to persist edited image to R2:', saveErr)
+          }
+        }
+
+        // Update the maximized view with the new result
+        setMaximizedMedia({ url: finalEditedUrl, name: 'Edited Image', type: 'image' })
+        setIsEditMode(false)
+        setEditPrompt('')
+        clearEditReferenceImage()
+
+        // Save to store
+        addImage({
+          id: uuidv4(),
+          assetId: '',
+          url: finalEditedUrl,
+          prompt: editPrompt.trim(),
+          createdAt: new Date().toISOString(),
+          view: 'front' as const,
+        })
+      } else {
+        // Video edit: use video-to-video
+        const seed = undefined
+        const editedUrl = await editVideoWithRunway(maximizedMedia.url, editPrompt.trim(), {
+          seed,
+        })
+
+        setMaximizedMedia({ url: editedUrl, name: 'Edited Video', type: 'video' })
+        setIsEditMode(false)
+        setEditPrompt('')
+
+        // Save to store
+        addGeneratedVideo({
+          url: editedUrl,
+          prompt: editPrompt.trim(),
+          predictionId: uuidv4(),
+          status: 'succeeded' as any,
+        })
+      }
+
+      // Mark assets as needing reload
+      setAssetsLoaded(false)
+    } catch (err) {
+      console.error('Error editing asset:', err)
+      setEditError(err instanceof Error ? err.message : 'Failed to edit')
+    } finally {
+      setIsEditing(false)
+    }
   }
 
   return (
@@ -761,16 +1357,16 @@ export function MediaGeneration() {
                       <div className="flex items-center justify-between">
                         <span className="text-[9px] text-white/60 truncate max-w-[60%]">{img.sourceName}</span>
                         <button
-                          onClick={(e) => handleBingDownload(e, img)}
-                          disabled={downloadingId === img.id}
+                          onClick={(e) => currentProject ? handleBingImportToProject(e, img) : handleBingDownload(e, img)}
+                          disabled={downloadingId === img.id || importingBingId === img.id}
                           className="flex items-center gap-1 bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white text-[10px] font-medium px-2 py-1 rounded-full transition-all disabled:opacity-50"
                         >
-                          {downloadingId === img.id ? (
+                          {downloadingId === img.id || importingBingId === img.id ? (
                             <Loader2 className="w-3 h-3 animate-spin" />
                           ) : (
                             <Download className="w-3 h-3" />
                           )}
-                          Save
+                          {currentProject ? "Import to project" : "Download"}
                         </button>
                       </div>
                     </div>
@@ -795,11 +1391,33 @@ export function MediaGeneration() {
           </div>
         )}
 
-        {/* ── Discover Grid (filtered gallery + generated media) ── Hidden when search results are active */}
+        {/* ── Gallery Section with Tab Toggle ── Hidden when search results are active */}
         {!hasActiveSearch && <div className="px-4 pt-4 pb-2">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-muted-foreground tracking-wide uppercase">Discover</h3>
-            {activeFilterCount > 0 && (
+          {/* Tab Toggle: Discover / Generated Assets */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center bg-background/50 border border-border rounded-full p-0.5">
+              <button
+                onClick={() => setGalleryTab("discover")}
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-300 ${galleryTab === "discover"
+                  ? "bg-foreground text-background shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Discover
+              </button>
+              <button
+                onClick={() => setGalleryTab("generated")}
+                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-300 ${galleryTab === "generated"
+                  ? "bg-foreground text-background shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                Generated Assets
+              </button>
+            </div>
+            {galleryTab === "discover" && activeFilterCount > 0 && (
               <div className="flex items-center gap-2">
                 <div className="flex flex-wrap gap-1">
                   {Object.entries(appliedFilters).flatMap(([groupId, values]) =>
@@ -822,7 +1440,19 @@ export function MediaGeneration() {
                 </button>
               </div>
             )}
+            {galleryTab === "generated" && assetsLoaded && (
+              <button
+                onClick={() => { setAssetsLoaded(false) }}
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Refresh
+              </button>
+            )}
           </div>
+
+          {/* ── DISCOVER TAB ── */}
+          {galleryTab === "discover" && (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
             {/* Search fallback for Discover gallery */}
             {searchQuery.trim() && filteredGallery.length === 0 && (
@@ -928,6 +1558,110 @@ export function MediaGeneration() {
               </div>
             )}
           </div>
+          )}
+
+          {/* ── GENERATED ASSETS TAB ── */}
+          {galleryTab === "generated" && (
+          <div>
+            {/* Loading */}
+            {isLoadingAssets && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <div key={`asset-skel-${i}`} className="relative aspect-[3/4] rounded-lg overflow-hidden bg-muted animate-pulse">
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Loader2 className="w-5 h-5 text-muted-foreground/30 animate-spin" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Not logged in */}
+            {!isAuthenticated && (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <FolderOpen className="w-12 h-12 text-muted-foreground/30 mb-4" />
+                <h4 className="text-sm font-semibold text-foreground mb-1">Login Required</h4>
+                <p className="text-xs text-muted-foreground">Sign in to view your generated assets.</p>
+              </div>
+            )}
+
+            {/* Empty state */}
+            {isAuthenticated && assetsLoaded && !isLoadingAssets && userAssets.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mb-4">
+                  <ImageIcon className="w-8 h-8 text-muted-foreground/40" />
+                </div>
+                <h4 className="text-sm font-semibold text-foreground mb-1">No assets yet</h4>
+                <p className="text-xs text-muted-foreground max-w-xs">Generate your first image or video using the prompt bar below.</p>
+              </div>
+            )}
+
+            {/* Assets Masonry Grid - respects original dimensions */}
+            {isAuthenticated && assetsLoaded && !isLoadingAssets && userAssets.length > 0 && (
+              <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6 gap-2 space-y-2">
+                {userAssets.map((asset) => {
+                  const isVideo = asset.assetType === "video"
+                  return (
+                    <div
+                      key={asset.id}
+                      onClick={() => setMaximizedMedia({
+                        url: asset.url,
+                        name: asset.name,
+                        type: isVideo ? 'video' : 'image'
+                      })}
+                      className="relative break-inside-avoid rounded-lg overflow-hidden cursor-pointer group/card hover:ring-1 hover:ring-primary/50 transition-all bg-muted"
+                    >
+                      {isVideo ? (
+                        <video
+                          src={asset.url}
+                          className="w-full h-auto object-contain block"
+                          muted
+                          preload="metadata"
+                        />
+                      ) : (
+                        <img
+                          src={asset.url}
+                          alt={asset.name}
+                          className="w-full h-auto object-contain block"
+                          loading="lazy"
+                        />
+                      )}
+                      {/* Hover overlay */}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent opacity-0 group-hover/card:opacity-100 transition-opacity duration-200" />
+                      {/* Bottom info */}
+                      <div className="absolute bottom-0 left-0 right-0 p-2 opacity-0 group-hover/card:opacity-100 transition-opacity duration-200">
+                        <p className="text-[10px] font-medium text-white truncate">{asset.name.substring(0, 24)}</p>
+                        <p className="text-[9px] text-white/50 mt-0.5">{new Date(asset.createdAt).toLocaleDateString()}</p>
+                      </div>
+                      {/* Video badge */}
+                      {isVideo && (
+                        <div className="absolute bottom-1 right-1 bg-black/60 text-[10px] text-white px-1 rounded flex gap-1 items-center">
+                          <Film className="w-3 h-3" /> VIDEO
+                        </div>
+                      )}
+                      {/* Import to project icon */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setImportPopup({
+                            isOpen: true,
+                            url: asset.url,
+                            type: isVideo ? "video" : "image",
+                            name: asset.name,
+                          })
+                        }}
+                        className="absolute bottom-1.5 right-1.5 w-7 h-7 rounded-lg bg-black/60 backdrop-blur-sm flex items-center justify-center text-white opacity-0 group-hover/card:opacity-100 hover:bg-primary/80 transition-all z-10"
+                        title="Import to project"
+                      >
+                        <FolderInput className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          )}
         </div>}
       </div>
 
@@ -986,13 +1720,23 @@ export function MediaGeneration() {
                 </label>
               )}
               <textarea
+                ref={promptTextareaRef}
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder={isAuthenticated ? "Type to imagine..." : "Please login to generate"}
-                className="flex-1 w-full bg-transparent text-foreground placeholder:text-muted-foreground p-3 text-sm resize-none focus:outline-none min-h-[80px] max-h-[200px]"
+                onChange={(e) => {
+                  const value = e.target.value
+                  setPrompt(value)
+                  updateMentionState("generate", value, e.target.selectionStart ?? value.length)
+                }}
+                placeholder={
+                  isAuthenticated
+                    ? (currentProject ? "Type to imagine... (use @ to mention project files)" : "Type to imagine...")
+                    : "Please login to generate"
+                }
+                className="media-mention-input flex-1 w-full bg-transparent text-foreground placeholder:text-muted-foreground p-3 text-sm resize-none focus:outline-none min-h-[80px] max-h-[200px]"
                 rows={3}
                 disabled={!isAuthenticated || isGenerating}
                 onKeyDown={(e) => {
+                  if (handleMentionKeyDown(e)) return
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault()
                     handleGenerate()
@@ -1000,6 +1744,24 @@ export function MediaGeneration() {
                 }}
               />
             </div>
+
+            {showMentionSuggestions && mentionTarget === "generate" && currentProject && filteredMentionFiles.length > 0 && (
+              <div
+                ref={mentionSuggestionsRef}
+                className="media-mention-suggestions absolute left-3 right-3 bottom-[calc(100%+8px)] max-h-52 overflow-y-auto bg-background border border-border rounded-xl shadow-xl z-50"
+              >
+                {filteredMentionFiles.map((item, index) => (
+                  <button
+                    key={`gen-mention-${item.path}`}
+                    onClick={() => insertMentionIntoTarget(item)}
+                    className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 border-b border-border/20 last:border-b-0 ${index === selectedMentionIndex ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
+                  >
+                    {item.type === "folder" ? <FolderClosed className="w-3.5 h-3.5 shrink-0" /> : <FileIcon className="w-3.5 h-3.5 shrink-0" />}
+                    <span className="truncate">{item.path}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Bottom toolbar */}
             <div className="flex items-center justify-between px-3 pb-2.5 pt-0.5">
@@ -1175,37 +1937,42 @@ export function MediaGeneration() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setMaximizedMedia(null)}
-            className="fixed inset-0 z-[100] bg-background/40 backdrop-blur-xl flex justify-center items-center p-4 overflow-hidden"
+            onClick={() => { if (!isEditMode) { setMaximizedMedia(null); setIsEditMode(false); setEditPrompt(""); setEditError(null); clearEditReferenceImage(); closeMentionSuggestions() } }}
+            className="fixed inset-0 z-[100] bg-background/40 backdrop-blur-xl flex flex-col overflow-hidden"
           >
+            {/* Media Container - in edit mode: fills from top to edit bar; normal: centered 80vh */}
             <motion.div
-              initial={{ scale: 0.95, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              initial={{ scale: 0.97, opacity: 0, y: 16 }}
+              animate={{
+                scale: 1,
+                opacity: 1,
+                y: 0,
+              }}
+              exit={{ scale: 0.97, opacity: 0, y: 16 }}
+              transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
               onClick={(e) => e.stopPropagation()}
-              className="relative w-fit max-w-3xl h-[80vh] bg-background rounded-[32px] overflow-hidden shadow-2xl border border-border/50 group"
+              className={`relative mx-auto w-fit max-w-3xl overflow-hidden group ${isEditMode ? 'flex-1 min-h-0 mt-0 mb-0' : 'my-auto'}`}
+              style={{
+                height: isEditMode ? undefined : '80vh',
+                transition: 'height 0.5s cubic-bezier(0.4, 0, 0.2, 1), flex 0.5s cubic-bezier(0.4, 0, 0.2, 1), margin 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
+              }}
             >
-              {/* Background blurred filler to satisfy "cover" requirement within the card area */}
-              <div className="absolute inset-0 z-0 select-none pointer-events-none">
-                {maximizedMedia.type === 'image' ? (
-                  <img src={maximizedMedia.url} alt="" className="w-full h-full object-cover blur-2xl opacity-40 scale-110" />
-                ) : (
-                  <video src={maximizedMedia.url} className="w-full h-full object-cover blur-2xl opacity-40 scale-110" muted />
-                )}
-              </div>
 
-              {/* Foreground Image / Video - Sizing the parent card to match content ratio */}
-              <div className="relative z-10 h-full w-auto flex items-center justify-center">
+
+              {/* Foreground Media */}
+              <div className="relative z-10 h-full w-auto flex items-center justify-center p-3">
                 {maximizedMedia.type === 'image' ? (
                   <img
                     src={maximizedMedia.url}
                     alt={maximizedMedia.name}
-                    className="h-full w-auto max-w-full object-contain shadow-xl"
+                    className="h-full w-auto max-w-full object-contain rounded-2xl"
+                    style={{ transition: 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)' }}
                   />
                 ) : (
                   <video
                     src={maximizedMedia.url}
-                    className="h-full w-auto max-w-full object-contain shadow-xl"
+                    className="h-full w-auto max-w-full object-contain rounded-2xl"
+                    style={{ transition: 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)' }}
                     autoPlay
                     loop
                     controls
@@ -1216,35 +1983,288 @@ export function MediaGeneration() {
               {/* Top controls (X button) */}
               <div className="absolute top-4 right-4 z-[30] pointer-events-auto">
                 <button
-                  onClick={() => setMaximizedMedia(null)}
-                  className="w-10 h-10 bg-black/60 backdrop-blur-xl text-white rounded-full flex items-center justify-center border border-white/20 hover:bg-black/80 hover:scale-110 transition-all shadow-lg group-hover:opacity-100"
+                  onClick={() => { setMaximizedMedia(null); setIsEditMode(false); setEditPrompt(""); setEditError(null); clearEditReferenceImage(); closeMentionSuggestions() }}
+                  className="w-10 h-10 bg-black/60 backdrop-blur-xl text-white rounded-full flex items-center justify-center border border-white/20 hover:bg-black/80 hover:scale-110 transition-all shadow-lg"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              {/* Top Left (Style Name / Title) */}
+              {/* Top Left (Asset Name - first 8 chars) */}
               <div className="absolute top-4 left-4 z-[30] pointer-events-none">
                 <div className="bg-black/60 backdrop-blur-xl px-4 py-2 rounded-full border border-white/20 shadow-lg pointer-events-auto">
-                  <span className="text-white text-sm font-medium tracking-wide">{maximizedMedia.name}</span>
+                  <span className="text-white text-sm font-medium tracking-wide">{maximizedMedia.name.substring(0, 8)}{maximizedMedia.name.length > 8 ? '…' : ''}</span>
                 </div>
               </div>
 
-              {/* Bottom right (Download button) */}
-              <div className="absolute bottom-4 right-4 z-[30] pointer-events-auto">
-                <button
-                  onClick={async () => {
-                    const safeName = maximizedMedia.name.replace(/\s+/g, '-').toLowerCase()
-                    const fileName = `${safeName}-${Date.now()}.png`
-                    await downloadImageSafe(maximizedMedia.url, fileName)
-                  }}
-                  className="flex items-center gap-2 bg-primary/90 hover:bg-primary backdrop-blur-xl text-primary-foreground px-6 py-3 rounded-full border border-white/10 transition-all shadow-xl hover:scale-105 active:scale-95"
-                >
-                  <Download className="w-4 h-4" />
-                  <span className="text-sm font-semibold">Download</span>
-                </button>
-              </div>
+              {/* Bottom controls (Edit + Download) - hidden when in edit mode */}
+              {!isEditMode && (
+                <div className="absolute bottom-4 right-4 z-[30] pointer-events-auto flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setIsEditMode(true)
+                      setEditError(null)
+                      setEditPrompt("")
+                      clearEditReferenceImage()
+                      closeMentionSuggestions()
+                    }}
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-xl text-white px-5 py-3 rounded-full border border-white/20 transition-all shadow-xl hover:scale-105 active:scale-95"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    <span className="text-sm font-semibold">Edit</span>
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (maximizedMedia.type === "image" && currentProject) {
+                        await handleSaveCurrentImageToProject()
+                        return
+                      }
+                      const safeName = maximizedMedia.name.replace(/\s+/g, '-').toLowerCase()
+                      const ext = maximizedMedia.type === 'video' ? 'mp4' : 'png'
+                      const fileName = `${safeName}-${Date.now()}.${ext}`
+                      await downloadImageSafe(maximizedMedia.url, fileName)
+                    }}
+                    className="flex items-center gap-2 bg-primary/90 hover:bg-primary backdrop-blur-xl text-primary-foreground px-6 py-3 rounded-full border border-white/10 transition-all shadow-xl hover:scale-105 active:scale-95"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span className="text-sm font-semibold">
+                      {maximizedMedia.type === "image" && currentProject ? "Save to project" : "Download"}
+                    </span>
+                  </button>
+                </div>
+              )}
             </motion.div>
+
+            {/* ── Edit Input Panel (slides up from bottom, compact like media gen bar) ── */}
+            <AnimatePresence>
+              {isEditMode && (
+                <motion.div
+                  initial={{ y: 60, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: 60, opacity: 0 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="shrink-0 bg-transparent pb-4 pt-3 px-4 flex justify-center"
+                >
+                  <div className="w-full max-w-3xl relative">
+                    {/* Edit error */}
+                    {editError && (
+                      <div className="mb-2 mx-2 p-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-500 text-xs font-mono">
+                        {editError}
+                      </div>
+                    )}
+
+                    {/* Edit loading indicator */}
+                    {isEditing && (
+                      <div className="mb-2 mx-2 flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>{maximizedMedia.type === 'image' ? 'Editing image...' : 'Editing video with gen4_aleph...'}</span>
+                      </div>
+                    )}
+
+                      {/* Optional reference image for edit mode */}
+                      {maximizedMedia.type === 'image' && editReferenceImagePreview && (
+                        <div className="px-3 pt-3">
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="relative w-12 h-12 rounded-lg overflow-hidden border border-border cursor-pointer hover:opacity-80 transition-opacity"
+                              onClick={() => setMaximizedMedia({ url: editReferenceImagePreview, name: 'Edit Reference', type: 'image' })}
+                            >
+                              <img src={editReferenceImagePreview} alt="Edit reference" className="w-full h-full object-cover" />
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  clearEditReferenceImage()
+                                }}
+                                className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors"
+                              >
+                                <X className="w-3 h-3 text-white" />
+                              </button>
+                            </div>
+                            <span className="text-xs text-muted-foreground">Optional reference attached</span>
+                          </div>
+                        </div>
+                      )}
+
+                    {/* Compact input container (matches media gen input bar) */}
+                    <div className="relative bg-muted/60 backdrop-blur-xl border border-border rounded-2xl focus-within:ring-1 focus-within:ring-border transition-all">
+                      {maximizedMedia.type === 'image' && (
+                        <label
+                          className="absolute top-3 left-3 z-10 w-9 h-9 rounded-full bg-background/80 border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer transition-colors"
+                          title="Upload reference image"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleEditReferenceImage}
+                            className="hidden"
+                            disabled={isEditing}
+                          />
+                        </label>
+                      )}
+                      <textarea
+                        ref={editPromptTextareaRef}
+                        value={editPrompt}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          setEditPrompt(value)
+                          updateMentionState("edit", value, e.target.selectionStart ?? value.length)
+                        }}
+                        placeholder={maximizedMedia.type === 'image'
+                          ? (currentProject ? "Describe how to edit this image... (use @ to mention project files)" : "Describe how to edit this image...")
+                          : "Describe how to edit this video..."
+                        }
+                        className={`media-mention-input w-full bg-transparent text-foreground placeholder:text-muted-foreground p-3 text-sm resize-none focus:outline-none min-h-[80px] max-h-[200px] ${maximizedMedia.type === 'image' ? 'pl-14' : ''}`}
+                        rows={3}
+                        disabled={isEditing}
+                        onKeyDown={(e) => {
+                          if (handleMentionKeyDown(e)) return
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault()
+                            handleEditAsset()
+                          }
+                        }}
+                      />
+
+                      {showMentionSuggestions && mentionTarget === "edit" && currentProject && filteredMentionFiles.length > 0 && (
+                        <div className="media-mention-suggestions absolute left-3 right-3 bottom-[calc(100%+8px)] max-h-52 overflow-y-auto bg-background border border-border rounded-xl shadow-xl z-50">
+                          {filteredMentionFiles.map((item, index) => (
+                            <button
+                              key={`edit-mention-${item.path}`}
+                              onClick={() => insertMentionIntoTarget(item)}
+                              className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 border-b border-border/20 last:border-b-0 ${index === selectedMentionIndex ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
+                            >
+                              {item.type === "folder" ? <FolderClosed className="w-3.5 h-3.5 shrink-0" /> : <FileIcon className="w-3.5 h-3.5 shrink-0" />}
+                              <span className="truncate">{item.path}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Edit Bottom Toolbar */}
+                      <div className="flex items-center justify-between px-3 pb-2.5 pt-0.5">
+                        <div className="flex items-center gap-2">
+                          {/* Model and Ratio controls - only for image editing */}
+                          {maximizedMedia.type === 'image' && (
+                            <>
+                              {/* Edit Model Dropdown */}
+                              <div className="relative media-dropdown-element">
+                                <button
+                                  onClick={() => {
+                                    setShowEditModelSelect(!showEditModelSelect)
+                                    setShowEditRatioSelect(false)
+                                  }}
+                                  className="flex items-center gap-2 bg-background border border-border text-foreground text-xs px-3 py-1 rounded-full hover:bg-muted transition-colors max-w-[160px]"
+                                >
+                                  <span className="truncate">{editImageModel}</span>
+                                  <ChevronDown className={`w-3 h-3 shrink-0 text-muted-foreground transition-transform ${showEditModelSelect ? 'rotate-180' : ''}`} />
+                                </button>
+                                {showEditModelSelect && (
+                                  <div className="absolute bottom-[calc(100%+8px)] left-0 min-w-[160px] bg-background border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                    {EDIT_IMAGE_MODELS.map((m) => (
+                                      <button
+                                        key={m.value}
+                                        onClick={() => {
+                                          setEditImageModel(m.value)
+                                          setShowEditModelSelect(false)
+                                        }}
+                                        className={`w-full text-left px-3 py-2 text-xs transition-colors ${editImageModel === m.value
+                                          ? "bg-muted text-foreground font-medium"
+                                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                        }`}
+                                      >
+                                        {m.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Edit Ratio Dropdown */}
+                              <div className="relative media-dropdown-element">
+                                <button
+                                  onClick={() => {
+                                    setShowEditRatioSelect(!showEditRatioSelect)
+                                    setShowEditModelSelect(false)
+                                  }}
+                                  className="flex items-center gap-2 bg-background border border-border text-foreground text-xs px-3 py-1 rounded-full hover:bg-muted transition-colors"
+                                >
+                                  <span>{EDIT_IMAGE_RATIOS.find(r => r.value === editImageRatio)?.label || '1:1'}</span>
+                                  <ChevronDown className={`w-3 h-3 shrink-0 text-muted-foreground transition-transform ${showEditRatioSelect ? 'rotate-180' : ''}`} />
+                                </button>
+                                {showEditRatioSelect && (
+                                  <div className="absolute bottom-[calc(100%+8px)] left-0 min-w-[120px] bg-background border border-border rounded-xl shadow-xl overflow-hidden py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                    {EDIT_IMAGE_RATIOS.map((r) => (
+                                      <button
+                                        key={r.value}
+                                        onClick={() => {
+                                          setEditImageRatio(r.value)
+                                          setShowEditRatioSelect(false)
+                                        }}
+                                        className={`w-full text-left px-3 py-2 text-xs transition-colors ${editImageRatio === r.value
+                                          ? "bg-muted text-foreground font-medium"
+                                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                        }`}
+                                      >
+                                        {r.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Seed input for image */}
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  value={editImageSeed}
+                                  onChange={(e) => setEditImageSeed(e.target.value)}
+                                  placeholder="Seed"
+                                  className="w-20 bg-background border border-border text-foreground text-xs px-2 py-1 rounded-full focus:outline-none focus:ring-1 focus:ring-border placeholder:text-muted-foreground/50"
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {/* Video editing - model label only, no seed/ratio */}
+                          {maximizedMedia.type === 'video' && (
+                            <div className="flex items-center gap-1 bg-background border border-border text-foreground text-xs px-3 py-1 rounded-full">
+                              <Film className="w-3 h-3 text-muted-foreground" />
+                              <span className="text-muted-foreground">gen4_aleph</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Right side: Cancel + Generate */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => { setIsEditMode(false); setEditPrompt(""); setEditError(null); clearEditReferenceImage(); closeMentionSuggestions() }}
+                            className="text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleEditAsset}
+                            disabled={isEditing || !editPrompt.trim()}
+                            className="w-10 h-10 bg-foreground text-background rounded-full flex items-center justify-center hover:scale-105 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                          >
+                            {isEditing ? (
+                              <div className="w-5 h-5 border-2 border-background border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="12" y1="19" x2="12" y2="5" />
+                                <polyline points="5 12 12 5 19 12" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1252,6 +2272,26 @@ export function MediaGeneration() {
       {/* ── Loading Screens ── */}
       <ImageGenerationLoader isVisible={isGenerating && genType === "image"} />
       <VideoGenerationLoader isVisible={isGenerating && genType === "video"} />
+
+      {/* ── Import to Project Popup ── */}
+      {importPopup && (
+        <ImportToProjectPopup
+          isOpen={importPopup.isOpen}
+          onClose={() => setImportPopup(null)}
+          assetUrl={importPopup.url}
+          assetType={importPopup.type}
+          assetName={importPopup.name}
+        />
+      )}
+
+      {isImportingToProject && currentProject && (
+        <div className="absolute inset-0 z-[120] bg-background/30 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-background/90 border border-border rounded-2xl px-5 py-4 shadow-xl flex items-center gap-3">
+            <Loader2 className="w-5 h-5 animate-spin text-primary" />
+            <span className="text-sm font-medium text-foreground">Importing asset to {currentProject.name}</span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

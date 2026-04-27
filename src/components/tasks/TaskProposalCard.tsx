@@ -33,25 +33,54 @@ function getTaskIcon(type: TaskType) {
 function getEditableFields(type: TaskType, config: TaskConfig) {
     switch (type) {
         case "image-generation":
+        case "text-to-image":
+        case "sprite-generation":
             return [
-                { key: "imageCount", label: "Number of Images", type: "select", options: [1, 2, 3, 4], value: config.imageCount || 4 },
-                { key: "imageResolution", label: "Resolution", type: "select", options: ["512", "768", "1024"], value: config.imageResolution || "1024" },
+                { key: "aiModel", label: "Model", type: "select", options: ["gen4_image_turbo", "gen4_image"], value: config.aiModel || "gen4_image_turbo" },
+                { key: "imageCount", label: "Images", type: "select", options: [1, 2, 3, 4], value: config.imageCount || 4 },
+                { key: "imageResolution", label: "Resolution", type: "select", options: ["512", "768", "1024", "2048"], value: config.imageResolution || "1024" },
+            ]
+        case "image-to-image":
+            return [
+                { key: "aiModel", label: "Model", type: "select", options: ["gen4_image_turbo", "gen4_image"], value: config.aiModel || "gen4_image_turbo" },
+                { key: "sourceImage", label: "Source Image", type: "text", value: config.sourceImage || "" },
+                { key: "textPrompt", label: "Prompt", type: "text", value: config.textPrompt || "" },
             ]
         case "3d-model":
             return [
-                { key: "sourceImage", label: "Source Image", type: "text", value: config.sourceImage || "" },
+                { key: "aiModel", label: "Model / Framework", type: "select", options: ["hitem3d", "v3.1", "p1.0"], value: config.aiModel || "hitem3d" },
+                { key: "sourceImage", label: "Front / Main View", type: "text", value: config.sourceImage || "" },
+                { key: "backImage", label: "Back View", type: "text", value: config.backImage || "" },
+                { key: "leftImage", label: "Left View", type: "text", value: config.leftImage || "" },
+                { key: "rightImage", label: "Right View", type: "text", value: config.rightImage || "" },
                 { key: "modelResolution", label: "Resolution", type: "select", options: ["512", "1024", "2048"], value: config.modelResolution || "1024" },
                 { key: "includeTexture", label: "Include Texture", type: "toggle", value: config.includeTexture !== false },
             ]
-        case "video-generation":
+        case "text-to-3d":
             return [
+                { key: "aiModel", label: "Model", type: "select", options: ["v3.1", "p1.0"], value: config.aiModel || "v3.1" },
+                { key: "textPrompt", label: "Prompt", type: "text", value: config.textPrompt || "" },
+                { key: "modelResolution", label: "Resolution", type: "select", options: ["512", "1024"], value: config.modelResolution || "1024" },
+            ]
+        case "video-generation":
+        case "text-to-video":
+            return [
+                { key: "aiModel", label: "Model", type: "select", options: ["veo3.1", "gen3a_turbo"], value: config.aiModel || "veo3.1" },
                 { key: "sourceImage", label: "Source Image", type: "text", value: config.sourceImage || "" },
                 { key: "videoPrompt", label: "Prompt", type: "text", value: config.videoPrompt || "" },
             ]
         case "audio-generation":
+        case "text-to-audio":
             return [
+                { key: "aiModel", label: "Provider", type: "select", options: ["elevenlabs", "suno"], value: config.aiModel || "elevenlabs" },
                 { key: "audioPrompt", label: "Prompt", type: "text", value: config.audioPrompt || "" },
-                { key: "audioType", label: "Type", type: "select", options: ["sfx", "voice", "environment"], value: config.audioType || "sfx" },
+                { key: "audioType", label: "Type", type: "select", options: ["sfx", "voice", "music"], value: config.audioType || "sfx" },
+            ]
+        case "auto-rigging":
+        case "animation-generation":
+            return [
+                { key: "aiModel", label: "Provider (Tripo)", type: "select", options: ["tripo-biped", "tripo-quad", "tripo-auto"], value: config.aiModel || "tripo-auto" },
+                { key: "sourceImage", label: "Source Model", type: "text", value: config.sourceImage || "" },
             ]
         default:
             return []

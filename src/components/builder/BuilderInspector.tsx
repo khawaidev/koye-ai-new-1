@@ -4,7 +4,7 @@ import { cn } from "../../lib/utils"
 import { create3DModelTask, queryTaskStatus } from "../../services/hitem3d"
 import { getImageById } from "../../services/multiDbDataService"
 import { editImageWithRunway } from "../../services/runwayml"
-import { editImageWithAicc } from "../../services/aicc"
+import { editImageWithHyperreal } from "../../services/hyperreal"
 
 import { createRiggingTask, getRiggingTask } from "../../services/tripo"
 import { useAppStore } from "../../store/useAppStore"
@@ -89,8 +89,8 @@ export function BuilderInspector() {
 
     if (!selectedAsset) {
         return (
-            <div className="w-64 border-l-2 border-border bg-background flex flex-col h-full font-mono">
-                <div className="px-4 py-3 border-b-2 border-border bg-muted/50">
+            <div className="flex flex-col h-full font-mono bg-background">
+                <div className="px-4 py-3 border-b border-white/10 bg-muted/5">
                     <h3 className="text-xs font-bold text-foreground tracking-wider">INSPECTOR</h3>
                 </div>
                 <div className="flex-1 flex items-center justify-center p-8">
@@ -281,20 +281,20 @@ export function BuilderInspector() {
             // Extract raw base64
             const { base64, mimeType } = await urlToBase64(imageUrl)
 
-            // Replace background — RunwayML first, AI.CC fallback
+            // Replace background — RunwayML first, Hyperreal fallback
             let newImageUrl: string | null = null
             try {
                 console.log("🚀 [BG Replace 1/2] RunwayML gen4_image")
                 newImageUrl = await editImageWithRunway(bgPrompt, base64, mimeType)
                 console.log("✅ Background replaced via RunwayML!")
             } catch (runwayErr) {
-                console.warn("⚠️ RunwayML BG replace failed, falling back to AI.CC…", runwayErr)
+                console.warn("⚠️ RunwayML BG replace failed, falling back to Hyperreal…", runwayErr)
             }
 
             if (!newImageUrl) {
-                console.log("🔄 [BG Replace 2/2] AI.CC fallback")
-                newImageUrl = await editImageWithAicc(bgPrompt, base64, mimeType)
-                console.log("✅ Background replaced via AI.CC (fallback)!")
+                console.log("🔄 [BG Replace 2/2] Hyperreal fallback")
+                newImageUrl = await editImageWithHyperreal(bgPrompt, imageUrl)
+                console.log("✅ Background replaced via Hyperreal (fallback)!")
             }
 
             // Store both for comparison
@@ -400,7 +400,7 @@ export function BuilderInspector() {
 
     return (
         <>
-            <div className="w-full border-l border-white/10 bg-background flex flex-col h-full font-mono">
+            <div className="w-full bg-background flex flex-col h-full font-mono">
 
 
                 <div className="p-4 space-y-4 overflow-y-auto flex-1 bg-background">

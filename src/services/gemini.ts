@@ -1,33 +1,10 @@
-import { GoogleGenerativeAI } from "@google/generative-ai"
-import { getApiKeys, withApiFallback } from "../lib/apiFallback"
+import { ThinkingLevel } from "@google/genai"
+import { getApiKeys } from "../lib/apiFallback"
 import { estimateTokenCount, trackTokenUsage } from "./tokenUsageService"
+import { withSmartRoute, withSmartRouteStream, type SmartRouteResult } from "./geminiSmartRouter"
 
 // Get API keys with fallback support
 const GEMINI_API_KEYS = getApiKeys("VITE_GEMINI_API_KEY")
-
-// Helper to get model instance with API key
-function getGeminiModel(apiKey: string, modelName: string) {
-  const genAI = new GoogleGenerativeAI(apiKey)
-  return genAI.getGenerativeModel({ model: modelName })
-}
-
-// Get primary model instances (will use first available key)
-const getPrimaryGeminiModel = () => {
-  if (GEMINI_API_KEYS.length === 0) {
-    throw new Error("Gemini API key is required. Set VITE_GEMINI_API_KEY in your .env file")
-  }
-  return getGeminiModel(GEMINI_API_KEYS[0], "gemini-2.5-flash")
-}
-
-const getPrimaryGeminiImageModel = () => {
-  if (GEMINI_API_KEYS.length === 0) {
-    throw new Error("Gemini API key is required. Set VITE_GEMINI_API_KEY in your .env file")
-  }
-  return getGeminiModel(GEMINI_API_KEYS[0], "gemini-2.5-flash-image")
-}
-
-export const geminiModel = getPrimaryGeminiModel()
-export const geminiImageModel = getPrimaryGeminiImageModel()
 
 const SYSTEM_PROMPT = `You are KOYE AI, an expert in game design, game coding, game programming languages etc and asset creation for both 2D and 3D games.
 You help users design game assets(2d images, 3d models, texture, rigging, video cutscense, etc) through deep conversations, brutal honesty, and accuracy.
@@ -200,7 +177,11 @@ IMPORTANT WORKFLOW RULES:
    - STRICTLY only use web search when you genuinely lack the information. Do NOT use it for every message.
    - When you trigger a web search, STOP your response immediately after the [WEB_SEARCH: ...] marker. Do not continue writing after it.
    - After the search results are injected by the system, you will be asked again. Use those results to write a comprehensive answer citing sources.
-   - NEVER output [WEB_SEARCH: ...] more than once in a single response.`
+   - NEVER output [WEB_SEARCH: ...] more than once in a single response.
+
+7. GAME IDEAS AND CONTEXT:
+   - If the user starts describing a game idea or discussing anything about building a game, and the PROJECT CONTEXT indicates they are NOT connected to a project, YOU MUST include the EXACT marker "[CONNECT_PROJECT_REQUIRED]" somewhere in your response.
+   - If the user discusses the game idea, changes, theme, or assets of the game, and they ARE connected to a project, ALWAYS automatically create or update a file named "game-context.md" in the project using CREATE_FILE or EDIT_FILE. It should contain the complete user's game idea refined by you through the discussions.`
 
 
 
@@ -211,68 +192,57 @@ export async function sendMessageToGemini(
     throw new Error("Gemini API key is required. Set VITE_GEMINI_API_KEY in your .env file")
   }
 
-  // Use image model if request involves images
-  const useImageModel = needsImageModel(messages)
-  const modelName = useImageModel ? "gemini-2.5-flash-image" : "gemini-2.5-flash"
-
-  return await withApiFallback(
-    GEMINI_API_KEYS,
-    async (apiKey) => {
-      const genAI = new GoogleGenerativeAI(apiKey)
-      let model = genAI.getGenerativeModel({ model: modelName })
-
-      try {
-        const chat = model.startChat({
-          history: [
-            {
-              role: "user",
-              parts: [{ text: SYSTEM_PROMPT }],
-            },
-            {
-              role: "model",
-              parts: [{ text: "Hello! I'm GameForge AI, your expert game asset creation partner. Let's design something amazing together. What kind of game asset would you like to create?" }],
-            },
-            ...messages.slice(0, -1),
-          ],
-        })
-
-        const result = await chat.sendMessage(messages[messages.length - 1].parts)
-        const response = await result.response
-        return response.text()
-      } catch (error) {
-        // Check if it's a quota error (429) and we're using image model
-        const errorMsg = error instanceof Error ? error.message : String(error)
-        const isQuotaError = errorMsg.includes("429") || errorMsg.includes("quota") || errorMsg.includes("Quota exceeded")
-
-        // Fallback to base model if image model hits quota error
-        if (isQuotaError && useImageModel) {
-          console.warn("Image model quota exceeded, falling back to base model (gemini-2.5-flash)")
-          model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
-
-          // Retry with base model
-          const chat = model.startChat({
-            history: [
-              {
-                role: "user",
-                parts: [{ text: SYSTEM_PROMPT }],
-              },
-              {
-                role: "model",
-                parts: [{ text: "Hello! I'm GameForge AI, your expert game asset creation partner. Let's design something amazing together. What kind of game asset would you like to create?" }],
-              },
-              ...messages.slice(0, -1),
-            ],
-          })
-
-          const result = await chat.sendMessage(messages[messages.length - 1].parts)
-          const response = await result.response
-          return response.text()
-        } else {
-          throw error
-        }
-      }
+  // Estimate input tokens for budget check
+  let estTokens = estimateTokenCount(SYSTEM_PROMPT)
+  for (const msg of messages) {
+    for (const part of msg.parts) {
+      if (part.text) estTokens += estimateTokenCount(part.text)
     }
-  )
+  }
+
+  try {
+    return await withSmartRoute(async (route: SmartRouteResult) => {
+      const contents = messages.map(msg => ({
+        role: msg.role === "model" ? "assistant" : "user",
+        parts: msg.parts.map(part => {
+          if (part.inlineData) {
+            return { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } }
+          }
+          return { text: part.text || "" }
+        })
+      }))
+
+      const result = await route.client.models.generateContent({
+        model: route.modelId,
+        systemInstruction: SYSTEM_PROMPT,
+        contents,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          temperature: 0.8,
+        },
+      })
+
+      const text = result.text || ""
+      return { result: text, tokensUsed: estTokens + estimateTokenCount(text) }
+    }, estTokens)
+  } catch (error) {
+    // If all Gemini keys exhausted, fall back to Hyperreal
+    if (error instanceof Error && error.message === "ALL_GEMINI_KEYS_EXHAUSTED") {
+      console.warn("[Gemini] All API keys exhausted, falling back to Hyperreal")
+      const { sendMessageToHyperrealStream } = await import("./hyperreal")
+      // Collect Hyperreal stream into a single string
+      let fullText = ""
+      const hyperMessages = messages.map(m => ({
+        role: m.role === "model" ? "assistant" as const : "user" as const,
+        content: m.parts.map(p => p.text || "").join("")
+      }))
+      for await (const chunk of sendMessageToHyperrealStream(hyperMessages, SYSTEM_PROMPT)) {
+        fullText += chunk
+      }
+      return fullText
+    }
+    throw error
+  }
 }
 
 // Helper to detect if request needs image model
@@ -336,7 +306,7 @@ function needsImageModel(
   return false
 }
 
-// Streaming mode for fast responses
+// Streaming mode for fast responses — uses smart router
 export async function* sendMessageToGeminiStream(
   messages: Array<{ role: "user" | "model"; parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>
 ): AsyncGenerator<string, void, unknown> {
@@ -344,155 +314,74 @@ export async function* sendMessageToGeminiStream(
     throw new Error("Gemini API key is required. Set VITE_GEMINI_API_KEY in your .env file")
   }
 
-  // Use image model if request involves images
-  const useImageModel = needsImageModel(messages)
-  const modelName = useImageModel ? "gemini-2.5-flash-image" : "gemini-2.5-flash"
-
-  // Calculate input tokens from all messages (system prompt + history + current message)
+  // Calculate input tokens for budget estimate
   let inputTokens = estimateTokenCount(SYSTEM_PROMPT)
-  inputTokens += estimateTokenCount("Hello! I'm GameForge AI, your expert game asset creation partner. Let's design something amazing together. What kind of game asset would you like to create?")
   for (const msg of messages) {
     for (const part of msg.parts) {
-      if (part.text) {
-        inputTokens += estimateTokenCount(part.text)
-      }
+      if (part.text) inputTokens += estimateTokenCount(part.text)
     }
   }
 
-  // Track output tokens
   let outputTokens = 0
 
-  let lastError: any = null
-
-  for (const apiKey of GEMINI_API_KEYS) {
-    try {
-      const genAI = new GoogleGenerativeAI(apiKey)
-      let model = genAI.getGenerativeModel({ model: modelName })
-
-      try {
-        const chat = model.startChat({
-          history: [
-            {
-              role: "user",
-              parts: [{ text: SYSTEM_PROMPT }],
-            },
-            {
-              role: "model",
-              parts: [{ text: "Hello! I'm GameForge AI, your expert game asset creation partner. Let's design something amazing together. What kind of game asset would you like to create?" }],
-            },
-            ...messages.slice(0, -1),
-          ],
+  try {
+    const gen = withSmartRouteStream(async function* (route: SmartRouteResult) {
+      const contents = messages.map(msg => ({
+        role: msg.role === "model" ? "assistant" : "user",
+        parts: msg.parts.map(part => {
+          if (part.inlineData) {
+            return { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } }
+          }
+          return { text: part.text || "" }
         })
+      }))
 
-        const result = await chat.sendMessageStream(messages[messages.length - 1].parts)
+      const stream = await route.client.models.generateContentStream({
+        model: route.modelId,
+        systemInstruction: SYSTEM_PROMPT,
+        contents,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          temperature: 0.8,
+        },
+      })
 
-        for await (const chunk of result.stream) {
-          const chunkText = chunk.text()
-          if (chunkText) {
-            outputTokens += estimateTokenCount(chunkText)
-            yield chunkText
-          }
-        }
-
-        // Track token usage after successful completion
-        trackTokenUsage(inputTokens, outputTokens)
-
-        // Success - return (exit the generator)
-        return
-      } catch (error) {
-        // Check if it's a quota error (429) and we're using image model
-        const errorMsg = error instanceof Error ? error.message : String(error)
-        const isQuotaError = errorMsg.includes("429") || errorMsg.includes("quota") || errorMsg.includes("Quota exceeded")
-
-        // Fallback to base model if image model hits quota error
-        if (isQuotaError && useImageModel) {
-          console.warn("Image model quota exceeded, falling back to base model (gemini-2.5-flash)")
-          model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
-
-          // Retry with base model
-          const chat = model.startChat({
-            history: [
-              {
-                role: "user",
-                parts: [{ text: SYSTEM_PROMPT }],
-              },
-              {
-                role: "model",
-                parts: [{ text: "Hello! I'm GameForge AI, your expert game asset creation partner. Let's design something amazing together. What kind of game asset would you like to create?" }],
-              },
-              ...messages.slice(0, -1),
-            ],
-          })
-
-          const result = await chat.sendMessageStream(messages[messages.length - 1].parts)
-
-          for await (const chunk of result.stream) {
-            const chunkText = chunk.text()
-            if (chunkText) {
-              outputTokens += estimateTokenCount(chunkText)
-              yield chunkText
-            }
-          }
-
-          // Track token usage after successful completion
-          trackTokenUsage(inputTokens, outputTokens)
-
-          // Success - return (exit the generator)
-          return
-        } else {
-          // Not a quota error or not using image model - throw to trigger fallback to next API key
-          throw error
+      for await (const chunk of stream) {
+        const chunkText = chunk.text()
+        if (chunkText) {
+          const tokens = estimateTokenCount(chunkText)
+          outputTokens += tokens
+          yield { text: chunkText, tokensUsed: tokens }
         }
       }
-    } catch (error) {
-      lastError = error
+    }, inputTokens)
 
-      // Check if we should try the next key
-      const errorMsg = error instanceof Error ? error.message : String(error)
-      const shouldFallback = shouldFallbackToNextKey(error)
-
-      if (!shouldFallback) {
-        // Error is not retryable, throw immediately
-        throw error
-      }
-
-      // Log fallback attempt (but don't throw yet - try next key)
-      const currentIndex = GEMINI_API_KEYS.indexOf(apiKey)
-      if (currentIndex < GEMINI_API_KEYS.length - 1) {
-        console.warn(`Gemini API key ${currentIndex + 1} failed, trying fallback ${currentIndex + 2}...`, error)
-      }
+    for await (const text of gen) {
+      yield text
     }
+
+    trackTokenUsage(inputTokens, outputTokens)
+  } catch (error) {
+    // If all Gemini keys exhausted, fall back to Hyperreal streaming
+    if (error instanceof Error && error.message === "ALL_GEMINI_KEYS_EXHAUSTED") {
+      console.warn("[Gemini] All API keys exhausted, falling back to Hyperreal stream")
+      const { sendMessageToHyperrealStream } = await import("./hyperreal")
+      const hyperMessages = messages.map(m => ({
+        role: m.role === "model" ? "assistant" as const : "user" as const,
+        content: m.parts.map(p => p.text || "").join("")
+      }))
+      for await (const chunk of sendMessageToHyperrealStream(hyperMessages, SYSTEM_PROMPT)) {
+        yield chunk
+      }
+      return
+    }
+    throw error
   }
-
-  // All keys failed
-  throw lastError || new Error("All Gemini API keys failed")
 }
 
-// Helper function for streaming fallback
-function shouldFallbackToNextKey(error: any): boolean {
-  if (!error) return false
-
-  const errorMessage = error instanceof Error ? error.message : String(error)
-  const errorString = errorMessage.toLowerCase()
-
-  const retryableErrors = [
-    "401",
-    "403",
-    "429",
-    "unauthorized",
-    "forbidden",
-    "quota",
-    "rate limit",
-    "invalid api key",
-    "api key",
-    "authentication",
-    "invalid key"
-  ]
-
-  return retryableErrors.some(keyword => errorString.includes(keyword))
-}
-
-// Thinking mode for heavy responses - uses REST API with thinking_config
+/**
+ * Thinking mode for heavy responses — uses smart router with thinkingConfig
+ */
 export async function sendMessageToGeminiWithThinking(
   messages: Array<{ role: "user" | "model"; parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> }>
 ): Promise<{ response: string; thinking: string }> {
@@ -500,215 +389,62 @@ export async function sendMessageToGeminiWithThinking(
     throw new Error("Gemini API key is required. Set VITE_GEMINI_API_KEY in your .env file")
   }
 
-  // Use image model if request involves images
-  const useImageModel = needsImageModel(messages)
-  const modelName = useImageModel ? "gemini-2.5-flash-image" : "gemini-2.5-flash"
-
-  // Build conversation history with system prompt (reusable)
-  const history = [
-    {
-      role: "user",
-      parts: [{ text: SYSTEM_PROMPT }],
-    },
-    {
-      role: "model",
-      parts: [{ text: "Hello! I'm GameForge AI, your expert game asset creation partner. Let's design something amazing together. What kind of game asset would you like to create?" }],
-    },
-    ...messages.slice(0, -1),
-  ]
-
-  // Convert messages to API format
-  const contents = history.map(msg => ({
-    role: msg.role,
-    parts: msg.parts.map(part => {
-      if (part.inlineData) {
-        return {
-          inlineData: {
-            mimeType: part.inlineData.mimeType,
-            data: part.inlineData.data,
-          }
-        }
-      }
-      return { text: part.text || "" }
-    })
-  }))
-
-  // Add the current message
-  const currentMessage = messages[messages.length - 1]
-  contents.push({
-    role: "user",
-    parts: currentMessage.parts.map(part => {
-      if (part.inlineData) {
-        return {
-          inlineData: {
-            mimeType: part.inlineData.mimeType,
-            data: part.inlineData.data,
-          }
-        }
-      }
-      return { text: part.text || "" }
-    })
-  })
-
-  // Build request body
-  const requestBody = {
-    contents,
+  let estTokens = estimateTokenCount(SYSTEM_PROMPT)
+  for (const msg of messages) {
+    for (const part of msg.parts) {
+      if (part.text) estTokens += estimateTokenCount(part.text)
+    }
   }
 
-  return await withApiFallback(
-    GEMINI_API_KEYS,
-    async (apiKey) => {
-      const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`
-
-      try {
-        // Make API request
-        const response = await fetch(API_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
+  try {
+    return await withSmartRoute(async (route: SmartRouteResult) => {
+      const contents = messages.map(msg => ({
+        role: msg.role === "model" ? "assistant" : "user",
+        parts: msg.parts.map(part => {
+          if (part.inlineData) {
+            return { inlineData: { mimeType: part.inlineData.mimeType, data: part.inlineData.data } }
+          }
+          return { text: part.text || "" }
         })
+      }))
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}))
-          throw new Error(`API request failed: ${response.status} ${response.statusText} - ${JSON.stringify(errorData)}`)
-        }
+      const genResult = await route.client.models.generateContent({
+        model: route.modelId,
+        systemInstruction: SYSTEM_PROMPT,
+        contents,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          temperature: 0.8,
+        },
+      })
 
-        const data = await response.json()
+      let thinkingText = ""
+      const candidate = genResult.candidates?.[0]
+      if (candidate) {
+        thinkingText = (candidate as any).thought || "Thinking process completed."
+      }
 
-        // Extract thinking and response from the API response
-        let thinking = ""
-        let responseText = ""
-
-        if (data.candidates && data.candidates[0]) {
-          const candidate = data.candidates[0]
-
-          // Extract thinking steps
-          if (candidate.thinkingSteps && Array.isArray(candidate.thinkingSteps)) {
-            thinking = candidate.thinkingSteps
-              .map((step: any) => {
-                if (step.text) return step.text
-                if (step.content?.parts) {
-                  return step.content.parts
-                    .map((p: any) => p.text || "")
-                    .filter((t: string) => t)
-                    .join(" ")
-                }
-                return ""
-              })
-              .filter((t: string) => t)
-              .join("\n\n")
-          }
-
-          // Extract response text
-          if (candidate.content && candidate.content.parts) {
-            const responseParts = candidate.content.parts
-              .map((part: any) => part.text || "")
-              .filter((t: string) => t)
-            responseText = responseParts.join(" ")
-          }
-        }
-
-        // If no thinking found, use a default message
-        if (!thinking) {
-          thinking = "Analyzing your request and generating a thoughtful response..."
-        }
-
-        // If no response text, try to get it from the full response
-        if (!responseText && data.candidates?.[0]?.content?.parts) {
-          responseText = data.candidates[0].content.parts
-            .map((p: any) => p.text || "")
-            .join(" ")
-        }
-
-        return {
-          response: responseText || "I've processed your request.",
-          thinking: thinking
-        }
-      } catch (error) {
-        // Check if it's a quota error (429) and we're using image model
-        const errorMsg = error instanceof Error ? error.message : String(error)
-        const isQuotaError = errorMsg.includes("429") || errorMsg.includes("quota") || errorMsg.includes("Quota exceeded")
-
-        // Fallback to base model if image model hits quota error
-        if (isQuotaError && useImageModel) {
-          console.warn("Image model quota exceeded, falling back to base model (gemini-2.5-flash)")
-          const fallbackModelName = "gemini-2.5-flash"
-          const fallbackAPI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${fallbackModelName}:generateContent?key=${apiKey}`
-
-          // Retry with base model
-          const fallbackResponse = await fetch(fallbackAPI_URL, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(requestBody),
-          })
-
-          if (!fallbackResponse.ok) {
-            const errorData = await fallbackResponse.json().catch(() => ({}))
-            throw new Error(`API request failed: ${fallbackResponse.status} ${fallbackResponse.statusText} - ${JSON.stringify(errorData)}`)
-          }
-
-          const fallbackData = await fallbackResponse.json()
-
-          // Extract thinking and response from the API response
-          let thinking = ""
-          let responseText = ""
-
-          if (fallbackData.candidates && fallbackData.candidates[0]) {
-            const candidate = fallbackData.candidates[0]
-
-            // Extract thinking steps
-            if (candidate.thinkingSteps && Array.isArray(candidate.thinkingSteps)) {
-              thinking = candidate.thinkingSteps
-                .map((step: any) => {
-                  if (step.text) return step.text
-                  if (step.content?.parts) {
-                    return step.content.parts
-                      .map((p: any) => p.text || "")
-                      .filter((t: string) => t)
-                      .join(" ")
-                  }
-                  return ""
-                })
-                .filter((t: string) => t)
-                .join("\n\n")
-            }
-
-            // Extract response text
-            if (candidate.content && candidate.content.parts) {
-              const responseParts = candidate.content.parts
-                .map((part: any) => part.text || "")
-                .filter((t: string) => t)
-              responseText = responseParts.join(" ")
-            }
-          }
-
-          // If no thinking found, use a default message
-          if (!thinking) {
-            thinking = "Analyzing your request and generating a thoughtful response..."
-          }
-
-          // If no response text, try to get it from the full response
-          if (!responseText && fallbackData.candidates?.[0]?.content?.parts) {
-            responseText = fallbackData.candidates[0].content.parts
-              .map((p: any) => p.text || "")
-              .join(" ")
-          }
-
-          return {
-            response: responseText || "I've processed your request.",
-            thinking: thinking
-          }
-        } else {
-          throw error
-        }
+      const responseText = genResult.text || ""
+      return {
+        result: {
+          response: responseText,
+          thinking: thinkingText || "Analyzing your request and generating a thoughtful response..."
+        },
+        tokensUsed: estTokens + estimateTokenCount(responseText),
+      }
+    }, estTokens)
+  } catch (error) {
+    if (error instanceof Error && error.message === "ALL_GEMINI_KEYS_EXHAUSTED") {
+      console.warn("[Gemini] All keys exhausted in thinking mode, returning fallback")
+      return {
+        response: "I'm currently experiencing high demand. Please try again in a moment.",
+        thinking: "All API resources temporarily exhausted."
       }
     }
-  )
+    throw error
+  }
 }
+
 
 /**
  * Generate an image using Gemini image model with image input (image-to-image)
@@ -746,29 +482,33 @@ export async function generateImageFromImage(imageUrl: string, viewPrompt: strin
     
     Return ONLY the prompt, no explanations.`
 
-    // Use fallback system for API keys
-    const enhancedPrompt = await withApiFallback(
-      GEMINI_API_KEYS,
-      async (apiKey) => {
-        const genAI = new GoogleGenerativeAI(apiKey)
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-image" })
-
-        const result = await model.generateContent([
+    // Use smart router for API keys
+    const enhancedPrompt = await withSmartRoute(async (route: SmartRouteResult) => {
+      const result = await route.client.models.generateContent({
+        model: route.modelId,
+        contents: [
           {
-            text: analysisPrompt,
-          },
-          {
-            inlineData: {
-              mimeType: "image/png",
-              data: base64,
-            },
-          },
-        ])
+            parts: [
+              { text: analysisPrompt },
+              {
+                inlineData: {
+                  mimeType: "image/png",
+                  data: base64,
+                }
+              }
+            ]
+          }
+        ],
+        config: {
+          thinkingConfig: {
+            thinkingLevel: ThinkingLevel.LOW,
+          }
+        }
+      })
 
-        const responseData = await result.response
-        return responseData.text().trim()
-      }
-    )
+      const text = result.text || ""
+      return { result: text, tokensUsed: estimateTokenCount(analysisPrompt) + estimateTokenCount(text) }
+    }, estimateTokenCount(analysisPrompt))
 
     // Ensure prompt is not too long (5000 char limit)
     const finalPrompt = enhancedPrompt.length > 5000
@@ -824,18 +564,20 @@ CRITICAL REQUIREMENTS:
 
 Return ONLY the formatted prompt following the structure above. No explanations.`
 
-  // Use fallback system for API keys
-  const generatedPrompt = await withApiFallback(
-    GEMINI_API_KEYS,
-    async (apiKey) => {
-      const genAI = new GoogleGenerativeAI(apiKey)
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
-
-      const result = await model.generateContent(prompt)
-      const response = await result.response
-      return response.text().trim()
-    }
-  )
+  // Use smart router for API keys
+  const generatedPrompt = await withSmartRoute(async (route: SmartRouteResult) => {
+    const result = await route.client.models.generateContent({
+      model: route.modelId,
+      contents: prompt,
+      config: {
+        thinkingConfig: {
+          thinkingLevel: ThinkingLevel.LOW,
+        }
+      }
+    })
+    const text = result.text || ""
+    return { result: text, tokensUsed: estimateTokenCount(prompt) + estimateTokenCount(text) }
+  }, estimateTokenCount(prompt))
 
   // Strict limit: 3500 characters max (leaves 1500 for view keywords)
   if (generatedPrompt.length > 3500) {

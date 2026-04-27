@@ -92,6 +92,17 @@ export async function getProjects(userId: string): Promise<Project[]> {
   )
 }
 
+export async function getProjectById(projectId: string): Promise<Project> {
+  const { data, error } = await supabase
+    .from("projects")
+    .select("*")
+    .eq("id", projectId)
+    .single()
+
+  if (error) throw error
+  return data
+}
+
 export async function deleteProject(projectId: string): Promise<void> {
   // Delete project bucket and assets first
   try {

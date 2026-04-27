@@ -1,5 +1,5 @@
 import { useRef } from "react"
-import appIcon from "../../assets/icon.jpg"
+import appIcon from "../../assets/icon2.png"
 import imageIcon from "../../assets/image.png"
 import { cn } from "../../lib/utils"
 

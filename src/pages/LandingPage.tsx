@@ -3,6 +3,7 @@ import {
     ArrowRight,
     Box,
     Check,
+    ChevronLeft,
     ChevronRight,
     Cloud,
     Code,
@@ -24,6 +25,8 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useTheme } from '../components/theme-provider';
+import appIcon from '../assets/icon2.png';
 
 import { ThemeToggle } from '../components/ui/theme-toggle';
 
@@ -83,6 +86,7 @@ const CopyCommand = ({ command }: { command: string }) => {
 };
 
 const Navbar = () => {
+    const { theme } = useTheme();
     const handleNavClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>, sectionId: string) => {
         e.preventDefault();
         smoothScrollTo(sectionId);
@@ -145,7 +149,11 @@ const Navbar = () => {
             `}</style>
             <div className="container mx-auto px-6 h-16 flex items-center justify-between">
                 <div className="flex items-center gap-2 font-mono text-xl font-bold tracking-tighter text-foreground">
-                    <Terminal className="w-6 h-6" />
+                    <img 
+                        src={appIcon} 
+                        alt="KOYE" 
+                        className={`w-8 h-8 rounded-full object-cover ${theme === 'dark' ? 'invert' : ''}`}
+                    />
                     <span>KOYE_AI</span>
                 </div>
                 <div className="hidden md:flex items-center gap-8 font-mono text-sm text-foreground">
@@ -193,87 +201,26 @@ const Navbar = () => {
     );
 };
 
-const Hero = () => {
-    const [showCLI, setShowCLI] = useState(false);
+const TerminalCarousel = () => {
+    const [activeIndex, setActiveIndex] = useState(0);
 
     useEffect(() => {
-        const timer = setTimeout(() => setShowCLI(true), 500);
-        return () => clearTimeout(timer);
+        const interval = setInterval(() => {
+            setActiveIndex((current) => (current + 1) % 3);
+        }, 5000);
+        return () => clearInterval(interval);
     }, []);
 
     return (
-        <section className="pt-32 pb-20 px-6 min-h-screen flex items-center border-b border-border relative overflow-hidden bg-background">
-            <div className="absolute inset-0 bg-[linear-gradient(to_right,hsl(var(--muted-foreground)/0.1)_1px,transparent_1px),linear-gradient(to_bottom,hsl(var(--muted-foreground)/0.1)_1px,transparent_1px)] bg-[size:14px_24px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]" />
-
-            <div className="container mx-auto relative z-10">
-                <div className="grid lg:grid-cols-2 gap-12 items-center">
-                    <div>
-                        <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.5 }}
-                            className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/20 text-sm font-mono mb-8 text-foreground"
-                        >
-                            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                            <span>Web App + CLI — One Platform</span>
-                        </motion.div>
-
-                        <motion.h1
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.5, delay: 0.1 }}
-                            className="text-5xl md:text-7xl font-bold tracking-tighter mb-8 font-mono text-foreground"
-                        >
-                            CREATE GAME<br />
-                            <span className="text-transparent bg-clip-text bg-gradient-to-r from-foreground to-muted-foreground">
-                                ASSETS WITH AI
-                            </span>
-                        </motion.h1>
-
-                        <motion.p
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.5, delay: 0.2 }}
-                            className="text-lg text-muted-foreground max-w-xl mb-10 font-mono leading-relaxed"
-                        >
-                            &gt; Generate 2D sprites, 3D models, textures & animations.<br />
-                            &gt; Create videos, audio, and complete game assets.<br />
-                            &gt; Use in browser or directly in your terminal.
-                        </motion.p>
-
-                        <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.5, delay: 0.3 }}
-                            className="flex flex-col sm:flex-row gap-4"
-                        >
-                            <Link
-                                to="/app"
-                                className="px-8 py-4 bg-foreground text-background font-mono font-bold rounded hover:bg-muted-foreground transition-all flex items-center justify-center gap-2 group"
-                            >
-                                <Cloud className="w-5 h-5" />
-                                <span>OPEN_WEB_APP</span>
-                                <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                            </Link>
-                            <a
-                                href="#cli"
-                                onClick={(e) => { e.preventDefault(); smoothScrollTo('cli'); }}
-                                className="px-8 py-4 border border-border text-foreground font-mono rounded hover:bg-muted/20 transition-all text-center flex items-center justify-center gap-2"
-                            >
-                                <Terminal className="w-5 h-5" />
-                                <span>INSTALL_CLI</span>
-                            </a>
-                        </motion.div>
-                    </div>
-
-                    {/* CLI Terminal Preview */}
-                    <motion.div
-                        initial={{ opacity: 0, x: 20 }}
-                        animate={{ opacity: showCLI ? 1 : 0, x: showCLI ? 0 : 20 }}
-                        transition={{ duration: 0.5, delay: 0.4 }}
-                        className="hidden lg:block"
-                    >
-                        <div className="bg-foreground rounded-lg overflow-hidden shadow-2xl border border-border">
+        <div className="w-full flex-col flex gap-4">
+            <div className="relative w-full overflow-hidden rounded-xl">
+                <div 
+                    className="flex transition-transform duration-500 ease-in-out"
+                    style={{ width: "300%", transform: `translateX(-${activeIndex * (100 / 3)}%)` }}
+                >
+                    {/* Slide 1: koye_terminal */}
+                    <div className="w-1/3 shrink-0 px-2 flex justify-center">
+                        <div className="w-full bg-foreground rounded-lg overflow-hidden shadow-2xl border border-border">
                             {/* Terminal Header */}
                             <div className="flex items-center gap-2 px-4 py-3 bg-foreground border-b border-muted-foreground/30">
                                 <div className="flex gap-2">
@@ -284,7 +231,7 @@ const Hero = () => {
                                 <span className="text-background/70 text-sm font-mono ml-2">koye_terminal</span>
                             </div>
                             {/* Terminal Content */}
-                            <div className="p-6 font-mono text-sm text-background/90 space-y-2">
+                            <div className="p-6 font-mono text-sm text-background/90 space-y-2 h-[350px] overflow-y-auto text-left">
                                 <div className="flex items-center gap-2">
                                     <span className="text-green-400">$</span>
                                     <span>curl -fsSL https://start.koye.ai/install.sh | bash</span>
@@ -300,7 +247,7 @@ const Hero = () => {
                                     <span>koye chat</span>
                                 </div>
                                 <div className="text-background/60 pl-4">🎮 Starting AI game dev assistant...</div>
-                                <div className="mt-4 p-3 border border-muted-foreground/30 rounded">
+                                <div className="mt-4 p-3 border border-muted-foreground/30 rounded flex-col">
                                     <div className="text-green-400 mb-2">[KOYE AI]</div>
                                     <div className="text-background/80">
                                         What would you like to create today?<br />
@@ -315,6 +262,131 @@ const Hero = () => {
                                 </div>
                             </div>
                         </div>
+                    </div>
+
+                    {/* Slide 2: CLI Commands Grid */}
+                    <div className="w-1/3 shrink-0 px-2 flex justify-center items-center">
+                        <div className="w-full grid grid-cols-2 gap-4 h-[350px] content-center text-left">
+                            <div className="p-4 bg-background border border-border rounded-lg shadow-xl shadow-foreground/5 h-28 flex flex-col justify-center">
+                                <code className="text-sm font-mono text-foreground">koye init</code>
+                                <p className="text-xs text-muted-foreground mt-1">Initialize in project</p>
+                            </div>
+                            <div className="p-4 bg-background border border-border rounded-lg shadow-xl shadow-foreground/5 h-28 flex flex-col justify-center">
+                                <code className="text-sm font-mono text-foreground">koye login</code>
+                                <p className="text-xs text-muted-foreground mt-1">Authenticate account</p>
+                            </div>
+                            <div className="p-4 bg-background border border-border rounded-lg shadow-xl shadow-foreground/5 h-28 flex flex-col justify-center">
+                                <code className="text-sm font-mono text-foreground">koye chat</code>
+                                <p className="text-xs text-muted-foreground mt-1">Start AI assistant</p>
+                            </div>
+                            <div className="p-4 bg-background border border-border rounded-lg shadow-xl shadow-foreground/5 h-28 flex flex-col justify-center">
+                                <code className="text-sm font-mono text-foreground">koye profile</code>
+                                <p className="text-xs text-muted-foreground mt-1">View account info</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Slide 3: Asset Output Structure */}
+                    <div className="w-1/3 shrink-0 px-2 flex justify-center">
+                        <div className="w-full p-6 bg-background border border-border rounded-lg shadow-xl shadow-foreground/5 h-[350px] overflow-y-auto text-left">
+                            <h4 className="font-mono font-bold text-foreground mb-4">$ tree koye-assets/</h4>
+                            <pre className="text-sm text-muted-foreground font-mono">
+                                {`koye-assets/
+├── images/
+│   ├── character_front.png
+│   └── character_sprites.png
+├── 3dmodels/
+│   ├── sword.glb
+│   └── helmet.obj
+├── videos/
+│   └── trailer.mp4
+└── audio/
+    ├── jump_sfx.mp3
+    └── bg_music.wav`}
+                            </pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            {/* Dots Indicator */}
+            <div className="flex justify-center gap-2 mt-2">
+                {[0, 1, 2].map(idx => (
+                    <button
+                        key={idx}
+                        onClick={() => setActiveIndex(idx)}
+                        className={`w-2.5 h-2.5 rounded-full transition-all ${activeIndex === idx ? "bg-foreground w-6" : "bg-foreground/20 hover:bg-foreground/40"}`}
+                        aria-label={`Go to slide ${idx + 1}`}
+                    />
+                ))}
+            </div>
+        </div>
+    );
+};
+
+const Hero = () => {
+    return (
+        <section className="pt-32 pb-20 px-6 min-h-screen flex items-center border-b border-border relative overflow-hidden bg-background">
+            <div className="absolute inset-0 bg-[linear-gradient(to_right,hsl(var(--muted-foreground)/0.1)_1px,transparent_1px),linear-gradient(to_bottom,hsl(var(--muted-foreground)/0.1)_1px,transparent_1px)] bg-[size:14px_24px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]" />
+
+            <div className="container mx-auto relative z-10">
+                <div className="max-w-4xl mx-auto flex flex-col items-center text-center">
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5 }}
+                        className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-muted/20 text-sm font-mono mb-8 text-foreground"
+                    >
+                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                        <span>Web App + CLI — One Platform</span>
+                    </motion.div>
+
+                    <motion.h1
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: 0.1 }}
+                        className="text-5xl md:text-7xl font-bold tracking-tighter mb-8 font-mono text-foreground"
+                    >
+                        AI GAME ENGINE FOR<br />
+                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-foreground to-muted-foreground">
+                            THE NEXT GENERATION.
+                        </span>
+                    </motion.h1>
+
+                    <motion.p
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: 0.2 }}
+                        className="text-lg text-muted-foreground max-w-xl mx-auto mb-10 font-mono leading-relaxed"
+                    >
+                        &gt; Turn ideas into playable games — instantly.<br />
+                        &gt; Generate assets, code, launch live demo in your browser.<br />
+                        &gt; Iterate with AI — modify, expand, build in real-time.<br />
+                        &gt; Export to your favorite engines or use it from terminal.
+                    </motion.p>
+
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: 0.3 }}
+                        className="flex flex-col sm:flex-row gap-4 justify-center w-full"
+                    >
+                        <Link
+                            to="/signup"
+                            className="px-8 py-4 bg-foreground text-background font-mono font-bold rounded hover:bg-muted-foreground transition-all flex items-center justify-center gap-2 group w-full sm:w-auto"
+                        >
+                            <Cloud className="w-5 h-5" />
+                            <span>OPEN_WEB_APP</span>
+                            <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                        </Link>
+                        <a
+                            href="#cli"
+                            onClick={(e) => { e.preventDefault(); smoothScrollTo('cli'); }}
+                            className="px-8 py-4 border border-border text-foreground font-mono rounded hover:bg-muted/20 transition-all flex items-center justify-center gap-2 w-full sm:w-auto"
+                        >
+                            <Terminal className="w-5 h-5" />
+                            <span>INSTALL_CLI</span>
+                        </a>
                     </motion.div>
                 </div>
             </div>
@@ -454,51 +526,185 @@ const CLI = () => (
                     whileInView={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.5, delay: 0.3 }}
                     viewport={{ once: true }}
-                    className="space-y-4"
+                    className="w-full flex items-center justify-center pt-8 lg:pt-0"
                 >
-                    {/* CLI Commands Grid */}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="p-4 bg-background border border-border rounded-lg">
-                            <code className="text-sm font-mono text-foreground">koye init</code>
-                            <p className="text-xs text-muted-foreground mt-1">Initialize in project</p>
-                        </div>
-                        <div className="p-4 bg-background border border-border rounded-lg">
-                            <code className="text-sm font-mono text-foreground">koye login</code>
-                            <p className="text-xs text-muted-foreground mt-1">Authenticate account</p>
-                        </div>
-                        <div className="p-4 bg-background border border-border rounded-lg">
-                            <code className="text-sm font-mono text-foreground">koye chat</code>
-                            <p className="text-xs text-muted-foreground mt-1">Start AI assistant</p>
-                        </div>
-                        <div className="p-4 bg-background border border-border rounded-lg">
-                            <code className="text-sm font-mono text-foreground">koye profile</code>
-                            <p className="text-xs text-muted-foreground mt-1">View account info</p>
-                        </div>
-                    </div>
-
-                    {/* Asset Output Structure */}
-                    <div className="p-6 bg-background border border-border rounded-lg">
-                        <h4 className="font-mono font-bold text-foreground mb-4">$ tree koye-assets/</h4>
-                        <pre className="text-sm text-muted-foreground font-mono">
-                            {`koye-assets/
-├── images/
-│   ├── character_front.png
-│   └── character_sprites.png
-├── 3dmodels/
-│   ├── sword.glb
-│   └── helmet.obj
-├── videos/
-│   └── trailer.mp4
-└── audio/
-    ├── jump_sfx.mp3
-    └── bg_music.wav`}
-                        </pre>
-                    </div>
+                    <TerminalCarousel />
                 </motion.div>
             </div>
         </div>
     </section>
 );
+
+const PricingDetailsCarousel = () => {
+    const [activeIndex, setActiveIndex] = useState(0);
+
+    const nextSlide = useCallback(() => setActiveIndex((current) => (current + 1) % 2), []);
+    const prevSlide = useCallback(() => setActiveIndex((current) => (current - 1 + 2) % 2), []);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            nextSlide();
+        }, 3000);
+        return () => clearInterval(interval);
+    }, [nextSlide]);
+
+    return (
+        <div className="relative max-w-5xl mx-auto px-4 group mt-8">
+            <div className="overflow-hidden rounded-xl">
+                <div 
+                    className="flex transition-transform duration-500 ease-in-out"
+                    style={{ width: "200%", transform: `translateX(-${activeIndex * 50}%)` }}
+                >
+                    {/* Slide 1: Credit Top-Ups */}
+                    <div className="w-1/2 shrink-0 px-4 pb-4">
+                        <div className="text-center mb-10">
+                            <h3 className="text-2xl md:text-3xl font-mono font-bold text-foreground mb-3 flex items-center justify-center gap-3">
+                                <div className="p-2 bg-foreground/10 rounded-lg">
+                                    <Zap className="w-6 h-6 text-foreground" />
+                                </div>
+                                CREDIT_TOPUPS
+                            </h3>
+                            <p className="text-muted-foreground text-sm max-w-lg mx-auto">
+                                Need more generating power? Instantly top up your account with more credits. Bonus credits scale with larger packs!
+                            </p>
+                        </div>
+                        <div className="grid sm:grid-cols-3 gap-6 relative">
+                            {/* Decorative background element */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-background via-foreground/5 to-background rounded-3xl blur-3xl -z-10" />
+
+                            <div className="p-6 bg-background/50 backdrop-blur-sm border border-border rounded-2xl text-center hover:border-foreground/30 hover:shadow-xl hover:shadow-foreground/5 transition-all flex flex-col justify-between">
+                                <div>
+                                    <div className="text-4xl font-mono font-bold text-foreground mb-1 tracking-tighter">$5<span className="text-2xl text-muted-foreground/60">.00</span></div>
+                                    <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono mb-6">₹375</div>
+                                </div>
+                                <div className="p-5 rounded-xl bg-muted/20 border border-border/50 transition-colors">
+                                    <div className="flex items-center justify-center gap-2 mb-1">
+                                        <Sparkles className="w-5 h-5 text-muted-foreground transition-colors" />
+                                        <span className="text-3xl font-bold text-foreground font-mono">500</span>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground font-mono tracking-widest uppercase">credits</div>
+                                </div>
+                            </div>
+
+                            <div className="p-6 bg-foreground backdrop-blur-sm border-2 border-foreground rounded-2xl text-center shadow-2xl shadow-foreground/20 transition-all flex flex-col justify-between relative overflow-hidden">
+                                <div className="absolute -top-4 -right-4 p-8 opacity-10 transition-all duration-500">
+                                    <Zap className="w-32 h-32 text-background" />
+                                </div>
+                                <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 bg-background text-foreground text-xs font-mono font-bold rounded-full shadow-lg">
+                                    MOST_POPULAR
+                                </div>
+                                <div className="relative z-10 pt-4">
+                                    <div className="text-4xl font-mono font-bold text-background mb-1 tracking-tighter">$10<span className="text-2xl text-background/60">.00</span></div>
+                                    <div className="text-xs text-background/60 uppercase tracking-wider font-mono mb-6">₹750</div>
+                                </div>
+                                <div className="p-5 rounded-xl bg-background/10 border border-background/20 relative z-10 backdrop-blur-md">
+                                    <div className="flex items-center justify-center gap-2 mb-1">
+                                        <Sparkles className="w-5 h-5 text-background" />
+                                        <span className="text-3xl font-bold text-background font-mono">1,200</span>
+                                    </div>
+                                    <div className="text-xs text-background/80 font-mono tracking-widest uppercase mb-3">credits</div>
+                                    <div className="inline-flex items-center px-3 py-1 bg-background/20 text-background text-xs font-bold rounded-full border border-background/30">
+                                        +20% BONUS
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="p-6 bg-background/50 backdrop-blur-sm border border-border rounded-2xl text-center hover:border-foreground/30 hover:shadow-xl hover:shadow-foreground/5 transition-all flex flex-col justify-between">
+                                <div>
+                                    <div className="text-4xl font-mono font-bold text-foreground mb-1 tracking-tighter">$20<span className="text-2xl text-muted-foreground/60">.00</span></div>
+                                    <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono mb-6">₹1,500</div>
+                                </div>
+                                <div className="p-5 rounded-xl bg-muted/20 border border-border/50 transition-colors">
+                                    <div className="flex items-center justify-center gap-2 mb-1">
+                                        <Sparkles className="w-5 h-5 text-muted-foreground transition-transform" />
+                                        <span className="text-3xl font-bold text-foreground font-mono">3,000</span>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground font-mono tracking-widest uppercase mb-3">credits</div>
+                                    <div className="inline-flex items-center px-3 py-1 bg-foreground/10 text-foreground text-xs font-bold rounded-full border border-foreground/20">
+                                        +50% BONUS
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Slide 2: Credit Costs */}
+                    <div className="w-1/2 shrink-0 px-4 pb-4">
+                        <div className="text-center mb-10">
+                            <h3 className="text-2xl md:text-3xl font-mono font-bold text-foreground mb-3 flex items-center justify-center gap-3">
+                                CREDIT_COSTS
+                            </h3>
+                            <p className="text-muted-foreground text-sm max-w-lg mx-auto">
+                                Transparent pricing for every action. Know exactly what you are paying for ahead of time.
+                            </p>
+                        </div>
+                        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl mx-auto">
+                            <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
+                                <MessageSquare className="w-6 h-6 mx-auto mb-2 text-foreground" />
+                                <p className="font-mono text-sm text-foreground font-bold">AI Chat</p>
+                                <p className="text-xs text-muted-foreground">100 credits / 1M tokens</p>
+                            </div>
+                            <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
+                                <Image className="w-6 h-6 mx-auto mb-2 text-foreground" />
+                                <p className="font-mono text-sm text-foreground font-bold">Image Gen</p>
+                                <p className="text-xs text-muted-foreground">5-15 credits / image</p>
+                            </div>
+                            <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
+                                <Box className="w-6 h-6 mx-auto mb-2 text-foreground" />
+                                <p className="font-mono text-sm text-foreground font-bold">3D Model</p>
+                                <p className="text-xs text-muted-foreground">20-70 credits / model</p>
+                            </div>
+                            <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
+                                <Video className="w-6 h-6 mx-auto mb-2 text-foreground" />
+                                <p className="font-mono text-sm text-foreground font-bold">Video Gen</p>
+                                <p className="text-xs text-muted-foreground">10-25 credits / second</p>
+                            </div>
+                            <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
+                                <Music className="w-6 h-6 mx-auto mb-2 text-foreground" />
+                                <p className="font-mono text-sm text-foreground font-bold">Audio Gen</p>
+                                <p className="text-xs text-muted-foreground">5 credits / second</p>
+                            </div>
+                            <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
+                                <Sparkles className="w-6 h-6 mx-auto mb-2 text-foreground" />
+                                <p className="font-mono text-sm text-foreground font-bold">Game Gen</p>
+                                <p className="text-xs text-muted-foreground">100-500 credits / game</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Arrows */}
+            <button 
+                onClick={prevSlide}
+                className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 bg-background border border-border rounded-full p-2 text-foreground opacity-0 group-hover:opacity-100 transition-all z-10 hover:bg-muted md:-translate-x-full"
+                aria-label="Previous pane"
+            >
+                <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button 
+                onClick={nextSlide}
+                className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 bg-background border border-border rounded-full p-2 text-foreground opacity-0 group-hover:opacity-100 transition-all z-10 hover:bg-muted md:translate-x-full"
+                aria-label="Next pane"
+            >
+                <ChevronRight className="w-5 h-5" />
+            </button>
+
+            {/* Dots */}
+            <div className="flex justify-center gap-2 mt-6">
+                {[0, 1].map(idx => (
+                    <button
+                        key={idx}
+                        onClick={() => setActiveIndex(idx)}
+                        className={`w-2 h-2 rounded-full transition-all ${activeIndex === idx ? "bg-foreground w-6" : "bg-foreground/20 hover:bg-foreground/40"}`}
+                        aria-label={`Go to slide ${idx + 1}`}
+                    />
+                ))}
+            </div>
+            <div className="h-4"></div>
+        </div>
+    );
+};
 
 const Pricing = () => {
     const navigate = useNavigate();
@@ -642,142 +848,14 @@ const Pricing = () => {
                     </div>
                 </div>
 
-                {/* Credit Top-Ups Section */}
-                <div className="max-w-4xl mx-auto mb-20 px-4">
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        whileInView={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.5 }}
-                        viewport={{ once: true }}
-                        className="text-center mb-10"
-                    >
-                        <h3 className="text-2xl md:text-3xl font-mono font-bold text-foreground mb-3 flex items-center justify-center gap-3">
-                            <div className="p-2 bg-foreground/10 rounded-lg">
-                                <Zap className="w-6 h-6 text-foreground" />
-                            </div>
-                            CREDIT_TOPUPS
-                        </h3>
-                        <p className="text-muted-foreground text-sm max-w-lg mx-auto">
-                            Need more generating power? Instantly top up your account with more credits. Bonus credits scale with larger packs!
-                        </p>
-                    </motion.div>
-
-                    <div className="grid sm:grid-cols-3 gap-6 relative">
-                        {/* Decorative background element */}
-                        <div className="absolute inset-0 bg-gradient-to-r from-background via-foreground/5 to-background rounded-3xl blur-3xl -z-10" />
-
-                        <motion.div
-                            whileHover={{ y: -5 }}
-                            className="p-6 bg-background/50 backdrop-blur-sm border border-border rounded-2xl text-center hover:border-foreground/30 hover:shadow-xl hover:shadow-foreground/5 transition-all flex flex-col justify-between group"
-                        >
-                            <div>
-                                <div className="text-4xl font-mono font-bold text-foreground mb-1 tracking-tighter">$5<span className="text-2xl text-muted-foreground/60">.00</span></div>
-                                <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono mb-6">₹375</div>
-                            </div>
-                            <div className="p-5 rounded-xl bg-muted/20 border border-border/50 group-hover:bg-muted/30 transition-colors">
-                                <div className="flex items-center justify-center gap-2 mb-1">
-                                    <Sparkles className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-colors" />
-                                    <span className="text-3xl font-bold text-foreground font-mono">500</span>
-                                </div>
-                                <div className="text-xs text-muted-foreground font-mono tracking-widest uppercase">credits</div>
-                            </div>
-                        </motion.div>
-
-                        <motion.div
-                            whileHover={{ y: -5 }}
-                            className="p-6 bg-foreground backdrop-blur-sm border-2 border-foreground rounded-2xl text-center shadow-2xl shadow-foreground/20 transition-all flex flex-col justify-between relative overflow-hidden group"
-                        >
-                            <div className="absolute -top-4 -right-4 p-8 opacity-10 group-hover:opacity-20 group-hover:scale-110 group-hover:rotate-12 transition-all duration-500">
-                                <Zap className="w-32 h-32 text-background" />
-                            </div>
-                            <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 bg-background text-foreground text-xs font-mono font-bold rounded-full shadow-lg">
-                                MOST_POPULAR
-                            </div>
-                            <div className="relative z-10 pt-4">
-                                <div className="text-4xl font-mono font-bold text-background mb-1 tracking-tighter">$10<span className="text-2xl text-background/60">.00</span></div>
-                                <div className="text-xs text-background/60 uppercase tracking-wider font-mono mb-6">₹750</div>
-                            </div>
-                            <div className="p-5 rounded-xl bg-background/10 border border-background/20 relative z-10 backdrop-blur-md">
-                                <div className="flex items-center justify-center gap-2 mb-1">
-                                    <Sparkles className="w-5 h-5 text-background" />
-                                    <span className="text-3xl font-bold text-background font-mono">1,200</span>
-                                </div>
-                                <div className="text-xs text-background/80 font-mono tracking-widest uppercase mb-3">credits</div>
-                                <div className="inline-flex items-center px-3 py-1 bg-background/20 text-background text-xs font-bold rounded-full border border-background/30">
-                                    +20% BONUS
-                                </div>
-                            </div>
-                        </motion.div>
-
-                        <motion.div
-                            whileHover={{ y: -5 }}
-                            className="p-6 bg-background/50 backdrop-blur-sm border border-border rounded-2xl text-center hover:border-foreground/30 hover:shadow-xl hover:shadow-foreground/5 transition-all flex flex-col justify-between group"
-                        >
-                            <div>
-                                <div className="text-4xl font-mono font-bold text-foreground mb-1 tracking-tighter">$20<span className="text-2xl text-muted-foreground/60">.00</span></div>
-                                <div className="text-xs text-muted-foreground uppercase tracking-wider font-mono mb-6">₹1,500</div>
-                            </div>
-                            <div className="p-5 rounded-xl bg-muted/20 border border-border/50 group-hover:bg-muted/30 transition-colors">
-                                <div className="flex items-center justify-center gap-2 mb-1">
-                                    <Sparkles className="w-5 h-5 text-muted-foreground group-hover:text-foreground transition-transform" />
-                                    <span className="text-3xl font-bold text-foreground font-mono">3,000</span>
-                                </div>
-                                <div className="text-xs text-muted-foreground font-mono tracking-widest uppercase mb-3">credits</div>
-                                <div className="inline-flex items-center px-3 py-1 bg-foreground/10 text-foreground text-xs font-bold rounded-full border border-foreground/20">
-                                    +50% BONUS
-                                </div>
-                            </div>
-                        </motion.div>
-                    </div>
-                </div>
-
-                {/* Credit Costs */}
-                <div className="max-w-4xl mx-auto">
-                    <h3 className="text-xl font-mono font-bold text-center mb-8 text-foreground">CREDIT_COSTS</h3>
-                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
-                            <MessageSquare className="w-6 h-6 mx-auto mb-2 text-foreground" />
-                            <p className="font-mono text-sm text-foreground font-bold">AI Chat</p>
-                            <p className="text-xs text-muted-foreground">100 credits / 1M tokens</p>
-                        </div>
-                        <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
-                            <Image className="w-6 h-6 mx-auto mb-2 text-foreground" />
-                            <p className="font-mono text-sm text-foreground font-bold">Image Gen</p>
-                            <p className="text-xs text-muted-foreground">5-15 credits / image</p>
-                        </div>
-                        <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
-                            <Box className="w-6 h-6 mx-auto mb-2 text-foreground" />
-                            <p className="font-mono text-sm text-foreground font-bold">3D Model</p>
-                            <p className="text-xs text-muted-foreground">20-70 credits / model</p>
-                        </div>
-                        <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
-                            <Video className="w-6 h-6 mx-auto mb-2 text-foreground" />
-                            <p className="font-mono text-sm text-foreground font-bold">Video Gen</p>
-                            <p className="text-xs text-muted-foreground">10-25 credits / second</p>
-                        </div>
-                        <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
-                            <Music className="w-6 h-6 mx-auto mb-2 text-foreground" />
-                            <p className="font-mono text-sm text-foreground font-bold">Audio Gen</p>
-                            <p className="text-xs text-muted-foreground">5 credits / second</p>
-                        </div>
-                        <div className="p-4 bg-muted/10 border border-border rounded-lg text-center">
-                            <Sparkles className="w-6 h-6 mx-auto mb-2 text-foreground" />
-                            <p className="font-mono text-sm text-foreground font-bold">Game Gen</p>
-                            <p className="text-xs text-muted-foreground">100-500 credits / game</p>
-                        </div>
-                    </div>
-                </div>
-
                 {/* View Full Pricing Link */}
-                <div className="text-center mt-12">
-                    <Link
-                        to="/pricing"
-                        className="inline-flex items-center gap-2 px-6 py-3 bg-foreground text-background font-mono font-bold rounded hover:bg-muted-foreground transition-colors"
-                    >
-                        <span>VIEW_FULL_PRICING</span>
-                        <ArrowRight className="w-4 h-4" />
+                <div className="text-center mb-16 mt-6">
+                    <Link to="/pricing" className="text-sm font-mono text-muted-foreground hover:text-foreground underline underline-offset-4 transition-colors">
+                        [view_full_pricing] →
                     </Link>
                 </div>
+
+                <PricingDetailsCarousel />
             </div>
         </section>
     );
@@ -878,6 +956,7 @@ const About = () => (
 );
 
 const Footer = () => {
+    const { theme } = useTheme();
     const handleNavClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>, sectionId: string) => {
         e.preventDefault();
         smoothScrollTo(sectionId);
@@ -889,7 +968,11 @@ const Footer = () => {
                 <div className="grid md:grid-cols-4 gap-12 mb-12">
                     <div>
                         <div className="flex items-center gap-2 font-mono text-xl font-bold mb-6 text-foreground">
-                            <Terminal className="w-6 h-6" />
+                            <img 
+                                src={appIcon} 
+                                alt="KOYE" 
+                                className={`w-8 h-8 rounded-full object-cover ${theme === 'dark' ? 'invert' : ''}`}
+                            />
                             <span>KOYE_AI</span>
                         </div>
                         <p className="text-muted-foreground text-sm leading-relaxed">
@@ -900,7 +983,7 @@ const Footer = () => {
                     <div>
                         <h4 className="font-mono font-bold mb-6 text-foreground">PLATFORMS</h4>
                         <ul className="space-y-4 text-sm text-muted-foreground">
-                            <li><Link to="/app" className="hover:text-foreground transition-colors">Web App</Link></li>
+                            <li><Link to="/signup" className="hover:text-foreground transition-colors">Web App</Link></li>
                             <li><a href="#cli" onClick={(e) => handleNavClick(e, 'cli')} className="hover:text-foreground transition-colors">CLI Tool</a></li>
                             <li><a href="#" className="hover:text-foreground transition-colors">API Access</a></li>
                             <li><a href="#" className="hover:text-foreground transition-colors">Documentation</a></li>

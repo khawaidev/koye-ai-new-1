@@ -2,7 +2,7 @@ import { Check, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useParams, useSearchParams } from "react-router-dom"
 import { cn } from "../lib/utils"
-import iconJpg from "../assets/icon.jpg"
+import iconJpg from "../assets/icon2.png"
 import { BuilderHeader } from "../components/builder/BuilderHeader"
 import { BuilderInspector } from "../components/builder/BuilderInspector"
 import { BuilderSidebar } from "../components/builder/BuilderSidebar"
@@ -12,9 +12,12 @@ import { UnifiedViewer } from "../components/ui/UnifiedViewer"
 import { useAuth } from "../hooks/useAuth"
 import { deleteProjectFile, loadProjectFilesFromStorage, saveProjectFilesToStorage } from "../services/projectFiles"
 import { useAppStore } from "../store/useAppStore"
+import { getProjectById } from "../services/supabase"
 import { detectFileType } from "../utils/fileTypeDetection"
 import { bulkSaveVFS } from "../services/vfs"
 import { ProjectLoader } from "../components/ui/ProjectLoader"
+import { LeftSidebar } from "../components/sidebar/LeftSidebar"
+import { useAgentToolStore } from "../store/useAgentToolStore"
 
 type HistoryState = {
     files: Record<string, string>
@@ -45,6 +48,11 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
         setGeneratedFiles,
         githubConnection,
         currentProject,
+        setCurrentProject,
+        isSidebarOpen,
+        setIsSidebarOpen,
+        stage,
+        setStage,
     } = useAppStore()
 
     const projectId = propsProjectId || routeProjectId || currentProject?.id
@@ -344,6 +352,16 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
 
             const loadFiles = async () => {
                 try {
+                    // If the project isn't in the store yet (e.g. direct load), fetch it
+                    if (!currentProject || currentProject.id !== projectId) {
+                        try {
+                            const projectData = await getProjectById(projectId)
+                            setCurrentProject(projectData)
+                        } catch (e) {
+                            console.error('Failed to load project metadata', e)
+                        }
+                    }
+
                     // Fetch from storage — this is the only source of truth
                     console.log(`Loading project files for ${projectId} from storage...`)
                     const dbFiles = await loadProjectFilesFromStorage(
@@ -485,145 +503,144 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
               startResizingInspector(e)
          }
     }, [isInspectorCollapsed, startResizingInspector])
-
     if (isLoading) {
         return <ProjectLoader />
     }
 
     return (
-        <div 
-            className="flex flex-col h-full bg-background overflow-hidden font-mono text-foreground select-none"
-            onMouseMove={(e) => {
-                 if (isInspectorCollapsed && e.clientX > window.innerWidth - 10) {
-                      // Optional: show a hint or allow dragging to reopen
-                 }
-            }}
-        >
-            <BuilderHeader
-                projectName={projectName}
-                onUndo={handleUndo}
-                onRedo={handleRedo}
-                onPlay={handlePlay}
-                canUndo={canUndo}
-                canRedo={canRedo}
-            />
-
-            <div className="flex-1 flex min-h-0 border-t border-white/10 relative">
-                {/* Reopen Trigger Zone (Extreme Right) */}
-                {isInspectorCollapsed && (
-                    <div 
-                        className="absolute right-0 top-0 bottom-0 w-2 z-[60] cursor-ew-resize hover:bg-white/5 transition-colors"
-                        onMouseDown={(e) => {
-                             setIsInspectorCollapsed(false)
-                             setInspectorWidth(200)
-                             startResizingInspector(e)
-                        }}
-                        onMouseMove={handleRightEdgeDrag}
-                    />
-                )}
-
-                {/* Left Sidebar - File Explorer */}
-                <BuilderSidebar
-                    selectedFile={selectedAsset ? (selectedAsset as any).path : null}
-                    onSelectFile={handleSelectFile}
-                    onFileCreated={handleFileCreated}
-                    projectId={projectId}
-                    userId={user?.id}
-                    onFileSynced={handleFileSynced}
-                    onUploadStateChange={setUploadState}
+        <div className="flex h-screen bg-background overflow-hidden text-foreground">
+            {/* Left Sidebar - Consistent with main app */}
+            <div className="shrink-0 transition-all duration-300 relative">
+                <LeftSidebar 
+                    isOpen={isSidebarOpen} 
+                    stage="build" 
+                    setStage={(s) => setStage(s as any)} 
+                    onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} 
                 />
+            </div>
 
-                {/* Middle - Viewer / Upload Overlay */}
-                <div className="flex-1 bg-muted/20 relative min-w-0 border-x border-white/10">
-                    <UnifiedViewer />
-
-                    {/* Upload to Project Overlay — covers the viewer area */}
-                    {uploadState && uploadState.isUploading && (
-                        <div className="absolute inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col items-center justify-center">
-                            <div className="max-w-md w-full p-8">
-                                <div className="flex flex-col items-center mb-8">
-                                    <div className="h-14 w-14 rounded-full overflow-hidden border border-white/20 bg-background animate-spin-think mb-4">
-                                        <img src={iconJpg} alt="Uploading..." className="h-full w-full object-cover" />
-                                    </div>
-                                    <h3 className="font-mono text-lg font-bold text-foreground">
-                                        UPLOADING TO PROJECT
-                                    </h3>
-                                    <p className="font-mono text-xs text-muted-foreground mt-1">
-                                        Syncing files to your project
-                                    </p>
-                                </div>
-
-                                <div className="space-y-3 border border-white/10 p-4 bg-background">
-                                    {uploadState.files.map((file, idx) => (
-                                        <div key={idx} className="flex items-center gap-3 font-mono text-xs">
-                                            <div className="w-5 h-5 flex items-center justify-center shrink-0">
-                                                {file.status === 'pending' && (
-                                                    <div className="h-2 w-2 rounded-full bg-muted-foreground" />
-                                                )}
-                                                {file.status === 'reading' && (
-                                                    <div className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full" />
-                                                )}
-                                                {file.status === 'uploading' && (
-                                                    <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full" />
-                                                )}
-                                                {file.status === 'success' && (
-                                                    <Check className="h-4 w-4 text-green-600" />
-                                                )}
-                                                {file.status === 'failed' && (
-                                                    <X className="h-4 w-4 text-red-600" />
-                                                )}
-                                            </div>
-                                            <span className="truncate text-foreground flex-1">{file.name}</span>
-                                            <span className="text-muted-foreground shrink-0">
-                                                {file.status === 'pending' && 'Waiting...'}
-                                                {file.status === 'reading' && 'Reading...'}
-                                                {file.status === 'uploading' && 'Uploading...'}
-                                                {file.status === 'success' && 'Uploaded ✓'}
-                                                {file.status === 'failed' && 'Failed ✗'}
-                                            </span>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                {/* Progress bar */}
-                                <div className="mt-4 h-2 bg-muted rounded-full overflow-hidden">
-                                    <div
-                                        className="h-full bg-foreground transition-all duration-500"
-                                        style={{
-                                            width: `${((uploadState.files.filter(f => f.status === 'success' || f.status === 'failed').length) / Math.max(uploadState.files.length, 1)) * 100}%`
-                                        }}
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-                {/* Right Sidebar - Inspector */}
-                <div 
-                    className={cn(
-                        "relative flex shrink-0 border-l border-white/10",
-                        !isResizingInspector && "transition-all duration-300 ease-in-out",
-                        isInspectorCollapsed ? "w-0 border-none" : "w-auto"
-                    )}
-                    style={{ 
-                        width: isInspectorCollapsed ? 0 : `${inspectorWidth}px`,
-                        opacity: isInspectorCollapsed ? 0 : 1,
-                        pointerEvents: isInspectorCollapsed ? 'none' : 'auto'
-                    }}
-                >
-                    {/* Resize Handle */}
-                    {!isInspectorCollapsed && (
+            {/* Main Builder Area */}
+            <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative font-mono">
+                <BuilderHeader 
+                    projectName={currentProject?.name || "Loading..."}
+                    onUndo={handleUndo}
+                    onRedo={handleRedo}
+                    onPlay={handlePlay}
+                    canUndo={canUndo}
+                    canRedo={canRedo}
+                />
+                
+                <div className="flex-1 flex min-h-0 border-t border-white/10 relative overflow-hidden">
+                    {/* Reopen Trigger Zone (Extreme Right) */}
+                    {isInspectorCollapsed && (
                         <div 
-                            className={cn(
-                                "absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize z-50 hover:bg-white/20 transition-colors",
-                                isResizingInspector && "bg-white/30"
-                            )}
-                            onMouseDown={startResizingInspector}
+                            className="absolute right-0 top-0 bottom-0 w-2 z-[60] cursor-ew-resize hover:bg-white/5 transition-colors"
+                            onMouseDown={(e) => {
+                                 setIsInspectorCollapsed(false)
+                                 setInspectorWidth(200)
+                                 startResizingInspector(e)
+                            }}
+                            onMouseMove={handleRightEdgeDrag}
                         />
                     )}
-                    <div className="flex-1 overflow-hidden h-full">
-                        <BuilderInspector />
+
+                    {/* Left Sidebar - File Explorer */}
+                    <BuilderSidebar
+                        selectedFile={selectedAsset ? (selectedAsset as any).path : null}
+                        onSelectFile={handleSelectFile}
+                        onFileCreated={handleFileCreated}
+                        projectId={projectId}
+                        userId={user?.id}
+                        onFileSynced={handleFileSynced}
+                        onUploadStateChange={setUploadState}
+                    />
+
+                    {/* Middle - Viewer / Upload Overlay */}
+                    <div className="flex-1 bg-muted/20 relative min-w-0 border-x border-white/10">
+                        <UnifiedViewer />
+
+                        {/* Upload to Project Overlay — covers the viewer area */}
+                        {uploadState && uploadState.isUploading && (
+                            <div className="absolute inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col items-center justify-center">
+                                <div className="max-w-md w-full p-8">
+                                    <div className="flex flex-col items-center mb-8">
+                                        <div className="h-14 w-14 rounded-full overflow-hidden border border-white/20 bg-background animate-spin-think mb-4">
+                                            <img src={iconJpg} alt="Uploading..." className="h-full w-full object-cover" />
+                                        </div>
+                                        <h3 className="font-mono text-lg font-bold text-foreground">
+                                            UPLOADING TO PROJECT
+                                        </h3>
+                                        <p className="font-mono text-xs text-muted-foreground mt-1">
+                                            Syncing files to your project
+                                        </p>
+                                    </div>
+
+                                    <div className="space-y-3 border border-white/10 p-4 bg-background">
+                                        {uploadState.files.map((file, idx) => (
+                                            <div key={idx} className="flex items-center gap-3 font-mono text-xs">
+                                                <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                                                    {file.status === 'pending' && (
+                                                        <div className="h-2 w-2 rounded-full bg-muted-foreground" />
+                                                    )}
+                                                    {file.status === 'reading' && (
+                                                        <div className="animate-spin h-4 w-4 border-2 border-foreground border-t-transparent rounded-full" />
+                                                    )}
+                                                    {file.status === 'uploading' && (
+                                                        <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full" />
+                                                    )}
+                                                    {file.status === 'success' && (
+                                                        <Check className="h-4 w-4 text-green-600" />
+                                                    )}
+                                                    {file.status === 'failed' && (
+                                                        <X className="h-4 w-4 text-red-600" />
+                                                    )}
+                                                </div>
+                                                <span className="truncate text-foreground flex-1">{file.name}</span>
+                                                <span className="text-muted-foreground shrink-0">
+                                                    {file.status === 'pending' && 'Waiting...'}
+                                                    {file.status === 'reading' && 'Reading...'}
+                                                    {file.status === 'uploading' && 'Uploading...'}
+                                                    {file.status === 'success' && 'Uploaded ✓'}
+                                                    {file.status === 'failed' && 'Failed ✗'}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Progress bar */}
+                                    <div className="mt-4 h-2 bg-muted rounded-full overflow-hidden">
+                                        <div 
+                                            className="h-full bg-foreground transition-all duration-500"
+                                            style={{ 
+                                                width: `${((uploadState.files.filter(f => f.status === 'success' || f.status === 'failed').length) / Math.max(uploadState.files.length, 1)) * 100}%` 
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Right Sidebar - Inspector */}
+                    <div 
+                        className={cn(
+                            "relative flex shrink-0 border-l border-white/10",
+                            !isResizingInspector && "transition-all duration-300 ease-in-out",
+                            isInspectorCollapsed ? "w-0 border-none" : "w-auto"
+                        )}
+                        style={{ width: isInspectorCollapsed ? 0 : inspectorWidth }}
+                    >
+                        {/* Resizer Handle */}
+                        {!isInspectorCollapsed && (
+                            <div 
+                                className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-50 hover:bg-white/10 transition-colors"
+                                onMouseDown={startResizingInspector}
+                            />
+                        )}
+
+                        <div className="flex-1 overflow-hidden">
+                            <BuilderInspector />
+                        </div>
                     </div>
                 </div>
             </div>
@@ -633,4 +650,3 @@ export function Builder({ projectId: propsProjectId, projectName: propsProjectNa
         </div>
     )
 }
-

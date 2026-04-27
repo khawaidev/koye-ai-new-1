@@ -2,8 +2,10 @@ import {
   AlertTriangle,
   Box,
   Calendar,
+  CheckCheck,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Crown,
   Download,
   Eye,
@@ -62,7 +64,7 @@ export function Dashboard() {
   const { theme } = useTheme()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { user, loading } = useAuth()
+  const { user, session, loading } = useAuth()
   const { subscription, usage, refresh: refreshPricing } = usePricing()
   const tabParam = searchParams.get("tab") as TabType | null
   const [activeTab, setActiveTab] = useState<TabType>(tabParam || "explore")
@@ -81,6 +83,7 @@ export function Dashboard() {
   const [itemToDelete, setItemToDelete] = useState<{ type: "image" | "model" | "video" | "audio" | "project"; id: string; dbId?: string } | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [passwordForm, setPasswordForm] = useState({ current: "", new: "", confirm: "" })
+  const [copiedToken, setCopiedToken] = useState(false)
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
@@ -599,56 +602,32 @@ export function Dashboard() {
             <div className="space-y-2 mb-8">
               <p className="px-4 text-[10px] font-bold text-muted-foreground/50 uppercase tracking-[0.2em] mb-4">Main Menu</p>
               <NavItem
-                icon={Eye}
-                label="Explore"
-                active={activeTab === "explore"}
-                onClick={() => setActiveTab("explore")}
-                collapsed={!isSidebarOpen}
-
-              />
-              <NavItem
-                icon={UserIcon}
                 label="Profile"
                 active={activeTab === "profile"}
                 onClick={() => setActiveTab("profile")}
                 collapsed={!isSidebarOpen}
-
               />
               <NavItem
-                icon={Home}
                 label="Projects"
                 active={activeTab === "projects"}
                 onClick={() => setActiveTab("projects")}
                 collapsed={!isSidebarOpen}
-
               />
             </div>
 
             <div className="space-y-2 mb-8">
               <p className="px-4 text-[10px] font-bold text-muted-foreground/50 uppercase tracking-[0.2em] mb-4">Account & Data</p>
               <NavItem
-                icon={TrendingUp}
                 label="Analytics & Usage"
                 active={activeTab === "usage"}
                 onClick={() => setActiveTab("usage")}
                 collapsed={!isSidebarOpen}
-
               />
               <NavItem
-                icon={Settings}
-                label="System Features"
-                active={activeTab === "features"}
-                onClick={() => setActiveTab("features")}
-                collapsed={!isSidebarOpen}
-
-              />
-              <NavItem
-                icon={Key}
                 label="Security"
                 active={activeTab === "accounts"}
                 onClick={() => setActiveTab("accounts")}
                 collapsed={!isSidebarOpen}
-
               />
             </div>
           </div>
@@ -779,7 +758,7 @@ export function Dashboard() {
                     <div className="mt-6 pt-8 border-t border-foreground/5 relative z-10">
                       <button
                         onClick={handleClaimProTrial}
-                        className="w-full py-5 bg-foreground/10 text-foreground border border-foreground/10 hover:bg-foreground/20 text-foreground hover:scale-[1.01] transition-all rounded-xl font-bold text-sm shadow-sm text-foreground flex items-center justify-center gap-3"
+                        className="w-fit mx-auto px-6 py-3 bg-foreground/10 text-foreground border border-foreground/10 hover:bg-foreground/20 text-foreground hover:scale-[1.01] transition-all rounded-xl font-bold text-sm shadow-sm text-foreground flex items-center justify-center gap-3"
                       >
                         <Crown className="h-4 w-4" />
                         Unlock 7-Day PRO Trial
@@ -1238,6 +1217,39 @@ export function Dashboard() {
                     <div className="bg-foreground/5 p-6 rounded-xl border border-foreground/5">
                       <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em] mb-2 block">Registered Terminal</label>
                       <div className="text-sm font-bold text-foreground">{user.email}</div>
+                    </div>
+
+                    <div className="bg-foreground/5 p-6 rounded-xl border border-foreground/5 relative overflow-hidden group">
+                      <div className="absolute inset-0 bg-gradient-to-r from-foreground/5 to-transparent opacity-0 group-hover:opacity-100 transition-all duration-500" />
+                      <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em] mb-2 block relative z-10">Koye-CLI Access Token</label>
+                      <p className="text-xs text-muted-foreground mb-4 max-w-xl relative z-10">
+                        Use this token to authenticate your local Koye-CLI instance. Run <code className="bg-background/50 px-1.5 py-0.5 rounded text-foreground font-mono">koye-cli koye login</code> in your terminal and paste this token when prompted.
+                      </p>
+                      
+                      <div className="flex items-center gap-3 relative z-10">
+                        <div className="flex-1 relative">
+                          <input 
+                            type="password" 
+                            readOnly 
+                            value={session?.access_token || ""} 
+                            className="w-full bg-background/50 border border-foreground/10 px-4 py-3 rounded-lg text-foreground font-mono text-xs focus:outline-none"
+                            id="cliTokenInput"
+                          />
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (session?.access_token) {
+                              navigator.clipboard.writeText(session.access_token)
+                              setCopiedToken(true)
+                              setTimeout(() => setCopiedToken(false), 2000)
+                            }
+                          }}
+                          className="px-4 py-3 bg-foreground text-background hover:bg-foreground/90 rounded-lg flex items-center gap-2 font-bold text-xs transition-all shadow-sm"
+                        >
+                          {copiedToken ? <CheckCheck className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                          {copiedToken ? "COPIED" : "COPY TOKEN"}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="space-y-6">
@@ -1755,7 +1767,7 @@ export function Dashboard() {
 }
 
 interface NavItemProps {
-  icon: React.ElementType
+  icon?: React.ElementType
   label: string
   active?: boolean
   collapsed: boolean
@@ -1784,8 +1796,8 @@ function NavItem({ icon: Icon, label, active, collapsed, number, badge, onClick 
           animate={{ opacity: 1 }}
         />
       )}
-      <Icon className={cn("h-5 w-5 shrink-0 transition-transform group-hover:scale-110", active && "text-foreground")} />
-      {!collapsed && <span className="flex-1 text-left font-medium tracking-tight">{label}</span>}
+      {Icon && <Icon className={cn("h-5 w-5 shrink-0 transition-transform group-hover:scale-110", active && "text-foreground")} />}
+      {!collapsed && <span className={cn("flex-1 text-left font-medium tracking-tight", !Icon && "pl-2")}>{label}</span>}
       {!collapsed && (number || badge) && (
         <span className={cn(
           "text-[10px] font-bold px-2 py-0.5 rounded-full",

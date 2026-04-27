@@ -14,6 +14,12 @@ const R2_WORKER_URL = import.meta.env.VITE_R2_WORKER_URL || ""
 // Public read URL for the R2 bucket (r2.dev subdomain or custom domain)
 const R2_PUBLIC_URL = import.meta.env.VITE_R2_PUBLIC_URL || ""
 
+function joinUrl(base: string, path: string): string {
+  const trimmedBase = base.replace(/\/+$/, "")
+  const trimmedPath = path.replace(/^\/+/, "")
+  return `${trimmedBase}/${trimmedPath}`
+}
+
 // ----- Auth helper -----
 
 async function getAuthToken(): Promise<string> {
@@ -133,7 +139,7 @@ export async function uploadAssetToR2(
     throw new Error("Unsupported data type for R2 upload")
   }
 
-  const response = await fetch(`${R2_WORKER_URL}/upload`, {
+  const response = await fetch(joinUrl(R2_WORKER_URL, "/upload"), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -169,7 +175,7 @@ export async function deleteAssetFromR2(
   const token = await getAuthToken()
   const fullKey = `${userId}/${r2Key}`
 
-  const response = await fetch(`${R2_WORKER_URL}/delete`, {
+  const response = await fetch(joinUrl(R2_WORKER_URL, "/delete"), {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -199,15 +205,14 @@ export async function listR2Assets(
   const token = await getAuthToken()
   const fullPrefix = `${userId}/${prefix}`
 
-  const response = await fetch(
-    `${R2_WORKER_URL}/list?prefix=${encodeURIComponent(fullPrefix)}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  )
+  const listUrl = new URL(joinUrl(R2_WORKER_URL, "/list"))
+  listUrl.searchParams.set("prefix", fullPrefix)
+  const response = await fetch(listUrl.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
 
   if (!response.ok) {
     throw new Error(`R2 list failed: ${response.statusText}`)
@@ -228,7 +233,7 @@ export function getR2PublicUrl(userId: string, r2Key: string): string {
   if (!R2_PUBLIC_URL) {
     // Fallback: construct from Worker URL (Worker can serve files too, but slower)
     console.warn("VITE_R2_PUBLIC_URL not set — using Worker URL for reads (slower)")
-    return `${R2_WORKER_URL}/file/${userId}/${r2Key}`
+    return joinUrl(R2_WORKER_URL, `/file/${userId}/${r2Key}`)
   }
   return `${R2_PUBLIC_URL}/${userId}/${r2Key}`
 }

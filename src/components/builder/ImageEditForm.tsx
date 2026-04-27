@@ -3,7 +3,7 @@ import { useState } from "react"
 import { cn } from "../../lib/utils"
 import { useAppStore } from "../../store/useAppStore"
 import { editImageWithRunway } from "../../services/runwayml"
-import { editImageWithAicc } from "../../services/aicc"
+import { editImageWithHyperreal } from "../../services/hyperreal"
 
 interface ImageEditFormProps {
     /** URL of the source image being edited */
@@ -21,7 +21,7 @@ export function ImageEditForm({ sourceImageUrl, sourceImageName, onClose }: Imag
     const [isGenerating, setIsGenerating] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
-    // Generate edited image — tries RunwayML first, then AI.CC as fallback
+    // Generate edited image — tries RunwayML first, then Hyperreal as fallback
     const handleGenerate = async () => {
         if (!editPrompt.trim() || !sourceImageUrl) return
 
@@ -70,18 +70,18 @@ export function ImageEditForm({ sourceImageUrl, sourceImageName, onClose }: Imag
                 resultUrl = await editImageWithRunway(prompt, base64, mimeType)
                 console.log(`✅ Image edit completed via RunwayML!`)
             } catch (runwayErr) {
-                console.warn("⚠️ RunwayML failed, falling back to AI.CC…", runwayErr)
+                console.warn("⚠️ RunwayML failed, falling back to Hyperreal…", runwayErr)
             }
 
-            // ── Provider 2: AI.CC (fallback) ──
+            // ── Provider 2: Hyperreal (fallback) ──
             if (!resultUrl) {
                 try {
-                    console.log(`🔄 [Provider 2/2] AI.CC doubao-seedream fallback`)
-                    resultUrl = await editImageWithAicc(prompt, base64, mimeType)
-                    console.log(`✅ Image edit completed via AI.CC (fallback)!`)
-                } catch (aiccErr) {
-                    console.error("❌ AI.CC fallback also failed:", aiccErr)
-                    throw aiccErr // both providers failed → surface the error
+                    console.log(`🔄 [Provider 2/2] Hyperreal fallback`)
+                    resultUrl = await editImageWithHyperreal(prompt, sourceImageUrl)
+                    console.log(`✅ Image edit completed via Hyperreal (fallback)!`)
+                } catch (hyperErr) {
+                    console.error("❌ Hyperreal fallback also failed:", hyperErr)
+                    throw hyperErr // both providers failed → surface the error
                 }
             }
 

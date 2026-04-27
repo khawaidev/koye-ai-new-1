@@ -240,22 +240,34 @@ export async function createAssetFromUrl(
 ): Promise<AssetMetadata> {
     // Helper function to fetch with CORS proxy fallback
     const fetchWithProxy = async (url: string) => {
-        try {
-            const res = await fetch(url);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res;
-        } catch (err: any) {
-            // If it's a TypeError (often CORS or network error) and it's an external URL, try proxy
-            if ((err.name === 'TypeError' || err.message === 'Failed to fetch') && url.startsWith('http')) {
-                console.warn(`Direct fetch failed for ${url}, trying local proxy...`);
-                // Use the configured backend URL or default to localhost
-                const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001"
-                const proxyUrl = `${backendUrl}/api/proxy-image?url=${encodeURIComponent(url)}`;
+        // Known CORS-friendly domains (Supabase, R2, etc.)
+        const isCorsFriendly = url.includes('.supabase.co') || 
+                               url.includes('.r2.dev') || 
+                               url.includes('r2.cloudflarestorage.com') ||
+                               url.includes('.workers.dev') ||
+                               url.startsWith('blob:') ||
+                               url.startsWith('data:') ||
+                               url.includes('localhost');
+
+        if (isCorsFriendly) {
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res;
+            } catch (err: any) {
+                console.warn(`Direct fetch failed for ${url}, trying public proxy...`);
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
                 const proxyRes = await fetch(proxyUrl);
                 if (!proxyRes.ok) throw new Error(`Proxy HTTP ${proxyRes.status}`);
                 return proxyRes;
             }
-            throw err;
+        } else {
+            // Immediate proxy for external URLs to avoid red console errors
+            console.log(`Using proxy directly for cross-origin URL: ${url}`);
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+            const proxyRes = await fetch(proxyUrl);
+            if (!proxyRes.ok) throw new Error(`Proxy HTTP ${proxyRes.status}`);
+            return proxyRes;
         }
     };
 
@@ -431,20 +443,30 @@ export async function importAssetToProject(input: ImportAssetInput): Promise<Ass
         throw new Error("Can only import general assets into projects")
     }
 
+    // Known CORS-friendly domains
+    const isCorsFriendly = sourceAsset.url.includes('.supabase.co') || 
+                           sourceAsset.url.includes('.r2.dev') || 
+                           sourceAsset.url.includes('r2.cloudflarestorage.com') ||
+                           sourceAsset.url.includes('.workers.dev') ||
+                           sourceAsset.url.startsWith('blob:') ||
+                           sourceAsset.url.startsWith('data:') ||
+                           sourceAsset.url.includes('localhost');
+
     // Fetch the file from source URL
     let response;
-    try {
-        response = await fetch(sourceAsset.url)
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    } catch (err: any) {
-        if ((err.name === 'TypeError' || err.message === 'Failed to fetch') && sourceAsset.url.startsWith('http')) {
-            console.warn(`Direct fetch failed for ${sourceAsset.url}, trying local proxy...`);
-            const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001"
-            const proxyUrl = `${backendUrl}/api/proxy-image?url=${encodeURIComponent(sourceAsset.url)}`;
+    if (isCorsFriendly) {
+        try {
+            response = await fetch(sourceAsset.url)
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        } catch (err: any) {
+            console.warn(`Direct fetch failed for ${sourceAsset.url}, trying proxy...`);
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(sourceAsset.url)}`;
             response = await fetch(proxyUrl);
-        } else {
-            throw err;
         }
+    } else {
+        console.log(`Using proxy directly for cross-origin URL: ${sourceAsset.url}`);
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(sourceAsset.url)}`;
+        response = await fetch(proxyUrl);
     }
 
     if (!response?.ok) {

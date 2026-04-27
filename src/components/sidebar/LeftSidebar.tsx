@@ -1,18 +1,18 @@
-import { Bone, Box, File, Folder, Image, MessageSquare, Music, Pen, Plus, Sparkles, Trash2, User, Video, X } from "lucide-react"
+import { Bone, Box, ExternalLink, File, Folder, Image, ListTodo, MessageSquare, Music, Pen, Plus, Sparkles, Trash2, User, Video, X } from "lucide-react"
 import React, { useEffect, useState } from "react"
 
-import appIconLight from "../../assets/icon.jpg"
-import appIconDark from "../../assets/icon.png"
+import appIcon from "../../assets/icon2.png"
 import { cn } from "../../lib/utils"
 import { recordSessionToProjectContext } from "../../services/projectContext"
 import { useAppStore } from "../../store/useAppStore"
 import { useGameDevStore } from "../../store/useGameDevStore"
+import { useTaskStore } from "../../store/useTaskStore"
 import { useTheme } from "../theme-provider"
 import { Button } from "../ui/button"
 import { ThemeToggle } from "../ui/theme-toggle"
 import { FileSystemSidebar } from "./FileSystemSidebar"
 
-type WorkflowStage = "chat" | "images" | "model" | "texture" | "rig" | "animate" | "audio" | "export" | "build" | "imageGeneration" | "videoGeneration" | "mediaGeneration" | "audioGeneration" | "model3DGeneration" | "sprites" | "dashboard" | "animations"
+type WorkflowStage = "chat" | "images" | "model" | "texture" | "rig" | "animate" | "audio" | "export" | "build" | "imageGeneration" | "videoGeneration" | "mediaGeneration" | "audioGeneration" | "model3DGeneration" | "sprites" | "dashboard" | "animations" | "tasks"
 
 interface LeftSidebarProps {
   isOpen: boolean
@@ -202,9 +202,9 @@ export function LeftSidebar({ isOpen, stage, setStage, onToggleSidebar }: LeftSi
           title={isOpen ? "Close Sidebar" : "Open Sidebar"}
         >
           <img
-            src={theme === "dark" ? appIconDark : appIconLight}
+            src={appIcon}
             alt="KOYE"
-            className="h-7 w-7 rounded-full object-cover"
+            className={cn("h-7 w-7 rounded-full object-cover", theme === "dark" && "invert")}
           />
         </button>
 
@@ -250,18 +250,54 @@ export function LeftSidebar({ isOpen, stage, setStage, onToggleSidebar }: LeftSi
             >
               <Folder className="h-[18px] w-[18px]" />
             </button>
-            <div className="absolute left-[52px] top-0 hidden group-hover:flex items-center bg-popover text-popover-foreground border border-border shadow-md rounded-md py-1.5 px-3 z-50 whitespace-nowrap animate-in fade-in slide-in-from-left-2 transition-all">
-              <span className="text-sm font-medium mr-3">{currentProject.name}</span>
+            <div className="absolute left-[52px] top-0 hidden group-hover:flex flex-col bg-popover text-popover-foreground border border-border shadow-md rounded-md py-1 px-1 z-50 whitespace-nowrap animate-in fade-in slide-in-from-left-2 transition-all min-w-[140px]">
+              <div className="flex items-center justify-between px-2 py-1.5 border-b border-border/50">
+                <span className="text-sm font-medium mr-3 truncate max-w-[120px]">{currentProject.name}</span>
+                <button
+                  onClick={handleDisconnectProject}
+                  className="hover:bg-muted p-1 rounded-sm text-muted-foreground hover:text-foreground transition-colors"
+                  title="Disconnect from project"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
               <button
-                onClick={handleDisconnectProject}
-                className="hover:bg-muted p-1 rounded-sm text-muted-foreground hover:text-foreground transition-colors"
-                title="Disconnect from project"
+                onClick={() => window.open(`${window.location.origin}/builder/${currentProject.id}`, '_blank')}
+                className="flex items-center gap-2 w-full text-left px-2 py-1.5 hover:bg-muted text-xs text-muted-foreground hover:text-foreground transition-colors rounded-sm"
               >
-                <X className="h-3.5 w-3.5" />
+                <ExternalLink className="h-3 w-3" />
+                Open in new tab
               </button>
             </div>
           </div>
         )}
+
+        {/* Tasks & Processes */}
+        {(() => {
+          const runningCount = useTaskStore.getState().getRunningTasks().length
+          const isTasksActive = stage === "tasks"
+          return (
+            <div className="relative flex justify-center w-full mt-1">
+              <button
+                onClick={() => setStage?.("tasks")}
+                className={cn(
+                  "flex items-center justify-center w-9 h-9 rounded-lg transition-colors",
+                  isTasksActive
+                    ? "bg-foreground text-white dark:text-black shadow-md"
+                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                )}
+                title="Tasks & Processes"
+              >
+                <ListTodo className="h-[18px] w-[18px]" />
+              </button>
+              {runningCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-blue-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center animate-pulse">
+                  {runningCount}
+                </span>
+              )}
+            </div>
+          )
+        })()}
 
         {/* Spacer */}
         <div className="flex-1" />

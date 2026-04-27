@@ -89,7 +89,7 @@ export function AnimationsLibrary() {
     <div className="flex h-screen flex-col bg-background overflow-hidden font-mono">
       <main className="flex-1 overflow-hidden bg-background">
         <div
-          className="mx-auto max-w-6xl h-full overflow-y-auto px-6 py-6 space-y-6"
+          className="h-full w-full overflow-y-auto px-8 py-8 space-y-6"
         >
           {/* Filters */}
           <div className="border-2 border-border bg-background p-4 shadow-lg space-y-4">
@@ -127,7 +127,7 @@ export function AnimationsLibrary() {
           </div>
 
           {/* Grid */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
             {filteredAnimations.map((animation) => (
               <div key={animation.id} className="border-2 border-border bg-background shadow-xl flex flex-col">
                 <div className="border-b border-border bg-foreground text-background px-4 py-2 flex items-center justify-between text-xs uppercase">

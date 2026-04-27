@@ -1,6 +1,7 @@
 import { create } from "zustand"
+import { persist } from "zustand/middleware"
 
-export type TaskType = "image-generation" | "3d-model" | "video-generation" | "audio-generation" | "auto-rigging" | "animation-generation" | "sprite-generation"
+export type TaskType = "image-generation" | "3d-model" | "video-generation" | "audio-generation" | "auto-rigging" | "animation-generation" | "sprite-generation" | "text-to-image" | "image-to-image" | "text-to-video" | "text-to-audio" | "text-to-3d"
 
 export type TaskStatus = "pending" | "running" | "completed" | "failed" | "cancelled"
 
@@ -10,6 +11,9 @@ export interface TaskConfig {
     imageResolution?: string
     // 3D model
     sourceImage?: string
+    backImage?: string
+    leftImage?: string
+    rightImage?: string
     modelResolution?: string
     includeTexture?: boolean
     textPrompt?: string
@@ -18,7 +22,8 @@ export interface TaskConfig {
     // Audio
     audioPrompt?: string
     audioType?: string
-    // General
+    // General / API overrides
+    aiModel?: string
     creditCost?: number
     estimatedTime?: string
 }
@@ -35,6 +40,11 @@ export interface Task {
     progress?: number
     resultMessageId?: string // links to the chat message holding the result
     resultUrl?: string // link to view the generated asset (opens in new tab)
+    // Extended fields for background task UI
+    assetName?: string       // Display name (first 8 chars of asset/prompt)
+    assetUrl?: string        // URL of the generated asset once done
+    assetType?: "image" | "video" | "audio" | "model" // For routing the "View" button
+    prompt?: string          // The generation prompt
 }
 
 // Credit cost lookup
@@ -85,13 +95,19 @@ export function getTaskEstimatedTime(type: TaskType): string {
 export function getTaskDisplayName(type: TaskType): string {
     switch (type) {
         case "image-generation":
-            return "Image Generation"
+        case "text-to-image":
+            return "Text to Image"
+        case "image-to-image":
+            return "Image to Image"
         case "3d-model":
-            return "3D Model Generation"
+        case "text-to-3d":
+            return "Text to 3D"
         case "video-generation":
-            return "Video Generation"
+        case "text-to-video":
+            return "Text to Video"
         case "audio-generation":
-            return "Audio Generation"
+        case "text-to-audio":
+            return "Text to Audio"
         case "auto-rigging":
             return "Auto Rigging"
         case "animation-generation":
@@ -119,13 +135,18 @@ interface TaskStoreState {
     updateTask: (id: string, updates: Partial<Task>) => void
     removeTask: (id: string) => void
     cancelTask: (id: string) => void
+    retryTask: (id: string) => void
     getRunningTasks: () => Task[]
     getRecentTasks: () => Task[]
+    getTasksByStatus: (status: TaskStatus) => Task[]
+    getStatusCounts: () => { failed: number; processing: number; completed: number }
 }
 
-export const useTaskStore = create<TaskStoreState>((set, get) => ({
-    tasks: [],
-    pendingProposal: null,
+export const useTaskStore = create<TaskStoreState>()(
+    persist(
+        (set, get) => ({
+            tasks: [],
+            pendingProposal: null,
 
     proposeTask: (type, config) => {
         // Calculate credit cost and estimated time
@@ -185,4 +206,37 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
             .tasks.filter((t) => t.createdAt > oneHourAgo)
             .sort((a, b) => b.createdAt - a.createdAt)
     },
-}))
+
+    retryTask: (id) => {
+        const task = get().tasks.find((t) => t.id === id)
+        if (task && task.status === "failed") {
+            set((state) => ({
+                tasks: state.tasks.map((t) =>
+                    t.id === id
+                        ? { ...t, status: "pending" as TaskStatus, error: undefined, progress: 0, startedAt: undefined, completedAt: undefined }
+                        : t
+                ),
+            }))
+            // Dispatch retry event so WorkflowManager / generation handlers can re-run
+            window.dispatchEvent(
+                new CustomEvent("retry-task", { detail: { taskId: id, task } })
+            )
+        }
+    },
+
+    getTasksByStatus: (status) => get().tasks.filter((t) => t.status === status),
+
+    getStatusCounts: () => {
+        const tasks = get().tasks
+        return {
+            failed: tasks.filter((t) => t.status === "failed").length,
+            processing: tasks.filter((t) => t.status === "running" || t.status === "pending").length,
+            completed: tasks.filter((t) => t.status === "completed").length,
+        }
+    }}),
+    {
+        name: 'task-store-storage',
+        // Optional: you can choose to only persist certain parts of the state
+        // partialize: (state) => ({ tasks: state.tasks }),
+    }
+))

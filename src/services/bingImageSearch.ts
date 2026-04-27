@@ -161,24 +161,76 @@ export async function searchBingImages(userQuery: string): Promise<BingImageResu
   return unique
 }
 
-// ─── CORS-safe download helper ───────────────────────────────────────────────
+// ─── CORS-safe download helpers ──────────────────────────────────────────────
 
 /**
- * Downloads an image in a CORS-safe way.
- * First tries fetch → blob → object URL. If that fails (CORS), opens the image
- * in a new tab so the user can save it manually.
+ * Fetch an image as a Blob using multiple strategies in order:
+ *
+ * 1. Vite dev proxy (/api/image-proxy) — most reliable, no CORS issues
+ * 2. corsproxy.io — fallback public CORS proxy
+ * 3. Direct fetch — works for CORS-friendly domains
+ *
+ * Returns the Blob or throws if ALL strategies fail.
+ */
+export async function downloadImageAsBlob(imageUrl: string): Promise<Blob> {
+  const strategies: Array<{ name: string; fetchFn: () => Promise<Response> }> = [
+    {
+      name: "Vite image proxy",
+      fetchFn: () => fetch(`/api/image-proxy?url=${encodeURIComponent(imageUrl)}`),
+    },
+    {
+      name: "corsproxy.io",
+      fetchFn: () => fetch(`https://corsproxy.io/?${encodeURIComponent(imageUrl)}`),
+    },
+    {
+      name: "Direct fetch",
+      fetchFn: () => fetch(imageUrl, { mode: "cors" }),
+    },
+  ]
+
+  let lastError: Error | null = null
+
+  for (const strategy of strategies) {
+    try {
+      console.log(`[BingImageSearch] Trying download via ${strategy.name}...`)
+      const response = await strategy.fetchFn()
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      const blob = await response.blob()
+
+      // Verify we got actual image data (not an HTML error page)
+      if (blob.size < 100) {
+        throw new Error(`Response too small (${blob.size} bytes), likely not an image`)
+      }
+      if (blob.type && blob.type.startsWith("text/")) {
+        throw new Error(`Got text response instead of image: ${blob.type}`)
+      }
+
+      console.log(`[BingImageSearch] ✓ Downloaded ${blob.size} bytes via ${strategy.name}`)
+      return blob
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      console.warn(`[BingImageSearch] ${strategy.name} failed:`, lastError.message)
+    }
+  }
+
+  throw lastError || new Error("All download strategies failed")
+}
+
+/**
+ * Downloads an image in a CORS-safe way and triggers a browser download.
+ *
+ * Uses `downloadImageAsBlob` with multi-strategy fallback.
+ * If ALL strategies fail, opens the image in a new tab so the user can save manually.
  */
 export async function downloadImageSafe(imageUrl: string, fileName: string): Promise<void> {
   try {
-    // Attempt 1: Direct fetch → blob download
-    const response = await fetch(imageUrl, {
-      mode: "cors",
-      credentials: "omit",
-    })
+    const blob = await downloadImageAsBlob(imageUrl)
 
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-
-    const blob = await response.blob()
+    // Trigger browser download
     const blobUrl = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = blobUrl
@@ -186,35 +238,11 @@ export async function downloadImageSafe(imageUrl: string, fileName: string): Pro
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
-    console.log(`[BingImageSearch] Downloaded via blob: ${fileName}`)
-  } catch (corsError) {
-    console.warn("[BingImageSearch] Direct download failed (likely CORS), trying proxy fallback...", corsError)
-
-    try {
-      // Attempt 2: Use a CORS proxy to fetch the image
-      // Try allorigins proxy
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrl)}`
-      const proxyResponse = await fetch(proxyUrl)
-
-      if (proxyResponse.ok) {
-        const blob = await proxyResponse.blob()
-        const blobUrl = URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = blobUrl
-        a.download = fileName
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
-        console.log(`[BingImageSearch] Downloaded via proxy: ${fileName}`)
-        return
-      }
-    } catch (proxyError) {
-      console.warn("[BingImageSearch] Proxy download also failed:", proxyError)
-    }
-
-    // Attempt 3: Open in new tab as last resort
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 2000)
+    console.log(`[BingImageSearch] Downloaded: ${fileName}`)
+  } catch (err) {
+    console.warn("[BingImageSearch] All download strategies failed, opening in new tab:", err)
+    // Last resort: open in new tab so the user can right-click → Save As
     window.open(imageUrl, "_blank")
     console.log(`[BingImageSearch] Opened in new tab for manual download: ${imageUrl}`)
   }

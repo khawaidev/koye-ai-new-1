@@ -16,9 +16,14 @@ import {
   ArrowUpRight,
   BarChart3,
   Loader2,
-  Check
+  Check,
+  FolderInput
 } from "lucide-react"
 import { useState, useRef, useCallback } from "react"
+import { useTaskStore } from "../../store/useTaskStore"
+import { checkRateLimit, recordRequest, getRateLimitMessage } from "../../services/rateLimiter"
+import { useToast } from "../ui/toast"
+import { ImportToProjectPopup } from "../ui/ImportToProjectPopup"
 import { useAuth } from "../../hooks/useAuth"
 import { uuidv4 } from "../../lib/uuid"
 import { saveAudio } from "../../services/multiDbDataService"
@@ -93,10 +98,14 @@ const MUSIC_DURATION_OPTIONS = [
 
 export function AudioGeneration() {
   const { user, isAuthenticated } = useAuth()
-  const { generatedAudio, addGeneratedAudio } = useAppStore()
+  const { generatedAudio, addGeneratedAudio, setStage } = useAppStore()
+  const { addTask, updateTask } = useTaskStore()
+  const { addToast } = useToast()
   const [activeTab, setActiveTab] = useState<AudioTab>("tts")
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  
+  const [importPopup, setImportPopup] = useState<{ isOpen: boolean; url: string; type: "audio"; name: string } | null>(null)
 
   // ─── TTS States ────────────────────────────
   const [ttsText, setTtsText] = useState("")
@@ -248,6 +257,36 @@ export function AudioGeneration() {
   // ─── Generation Handlers ────────────────────
   const handleGenerateTTS = async () => {
     if (!ttsText.trim()) return
+
+    const rateCheck = checkRateLimit("audio-generation")
+    if (!rateCheck.allowed) {
+      const msg = getRateLimitMessage("audio-generation", rateCheck.retryAfterMs)
+      setError(msg)
+      addToast({ title: "Rate Limit", description: msg, variant: "warning" })
+      return
+    }
+    recordRequest("audio-generation")
+
+    const taskId = uuidv4()
+    const assetName = "TTS: " + ttsText.trim().substring(0, 10)
+    addTask({
+      id: taskId,
+      type: "text-to-audio",
+      status: "running",
+      config: {},
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+      assetName,
+      assetType: "audio",
+      prompt: ttsText.trim(),
+    })
+
+    addToast({
+      title: "Audio Generation Started",
+      description: "Speech generation sent to background",
+      variant: "info",
+    })
+
     setIsGenerating(true)
     setError(null)
     try {
@@ -263,12 +302,55 @@ export function AudioGeneration() {
       const audioData = { id: uuidv4(), url, prompt: ttsText.substring(0, 50), status: "succeeded" as const, type: "tts" as const, createdAt: new Date().toISOString() }
       addGeneratedAudio(audioData as any)
       setCurrentAudioUrl(url)
+      
+      updateTask(taskId, { status: "completed", completedAt: Date.now(), assetUrl: url, resultUrl: url })
+      addToast({
+        title: "Audio Ready",
+        description: "Your generated speech is ready",
+        variant: "success",
+        action: { label: "View", onClick: () => setStage("audioGeneration") },
+      })
+
       await saveGeneratedAudioToDb(audioData)
-    } catch (e: any) { setError(e.message) } finally { setIsGenerating(false) }
+    } catch (e: any) { 
+      setError(e.message) 
+      updateTask(taskId, { status: "failed", error: e.message, completedAt: Date.now() })
+      addToast({ title: "Generation Failed", description: e.message, variant: "error" })
+    } finally { setIsGenerating(false) }
   }
 
   const handleGenerateSFX = async () => {
     if (!sfxPrompt.trim()) return
+
+    const rateCheck = checkRateLimit("audio-generation")
+    if (!rateCheck.allowed) {
+      const msg = getRateLimitMessage("audio-generation", rateCheck.retryAfterMs)
+      setError(msg)
+      addToast({ title: "Rate Limit", description: msg, variant: "warning" })
+      return
+    }
+    recordRequest("audio-generation")
+
+    const taskId = uuidv4()
+    const assetName = "SFX: " + sfxPrompt.trim().substring(0, 10)
+    addTask({
+      id: taskId,
+      type: "audio-generation",
+      status: "running",
+      config: {},
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+      assetName,
+      assetType: "audio",
+      prompt: sfxPrompt.trim(),
+    })
+
+    addToast({
+      title: "Audio Generation Started",
+      description: "SFX generation sent to background",
+      variant: "info",
+    })
+
     setIsGenerating(true)
     setError(null)
     try {
@@ -280,12 +362,55 @@ export function AudioGeneration() {
       const audioData = { id: uuidv4(), url, prompt: sfxPrompt, status: "succeeded" as const, type: "sfx" as const, createdAt: new Date().toISOString() }
       addGeneratedAudio(audioData as any)
       setCurrentAudioUrl(url)
+
+      updateTask(taskId, { status: "completed", completedAt: Date.now(), assetUrl: url, resultUrl: url })
+      addToast({
+        title: "SFX Ready",
+        description: "Your sound effect is ready",
+        variant: "success",
+        action: { label: "View", onClick: () => setStage("audioGeneration") },
+      })
+
       await saveGeneratedAudioToDb(audioData)
-    } catch (e: any) { setError(e.message) } finally { setIsGenerating(false) }
+    } catch (e: any) { 
+      setError(e.message) 
+      updateTask(taskId, { status: "failed", error: e.message, completedAt: Date.now() })
+      addToast({ title: "Generation Failed", description: e.message, variant: "error" })
+    } finally { setIsGenerating(false) }
   }
 
   const handleGenerateMusic = async () => {
     if (!musicPrompt.trim()) return
+
+    const rateCheck = checkRateLimit("audio-generation")
+    if (!rateCheck.allowed) {
+      const msg = getRateLimitMessage("audio-generation", rateCheck.retryAfterMs)
+      setError(msg)
+      addToast({ title: "Rate Limit", description: msg, variant: "warning" })
+      return
+    }
+    recordRequest("audio-generation")
+
+    const taskId = uuidv4()
+    const assetName = "Music: " + musicPrompt.trim().substring(0, 10)
+    addTask({
+      id: taskId,
+      type: "audio-generation",
+      status: "running",
+      config: {},
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+      assetName,
+      assetType: "audio",
+      prompt: musicPrompt.trim(),
+    })
+
+    addToast({
+      title: "Audio Generation Started",
+      description: "Music generation sent to background",
+      variant: "info",
+    })
+
     setIsGenerating(true)
     setError(null)
     try {
@@ -297,8 +422,21 @@ export function AudioGeneration() {
       const audioData = { id: uuidv4(), url, prompt: musicPrompt, status: "succeeded" as const, type: "music" as const, createdAt: new Date().toISOString() }
       addGeneratedAudio(audioData as any)
       setCurrentAudioUrl(url)
+
+      updateTask(taskId, { status: "completed", completedAt: Date.now(), assetUrl: url, resultUrl: url })
+      addToast({
+        title: "Music Ready",
+        description: "Your generated music track is ready",
+        variant: "success",
+        action: { label: "View", onClick: () => setStage("audioGeneration") },
+      })
+
       await saveGeneratedAudioToDb(audioData)
-    } catch (e: any) { setError(e.message) } finally { setIsGenerating(false) }
+    } catch (e: any) { 
+      setError(e.message) 
+      updateTask(taskId, { status: "failed", error: e.message, completedAt: Date.now() })
+      addToast({ title: "Generation Failed", description: e.message, variant: "error" })
+    } finally { setIsGenerating(false) }
   }
 
   // ─── Rendering Helper ───────────────────────
@@ -1012,6 +1150,19 @@ export function AudioGeneration() {
             </div>
 
             <div className="flex items-center gap-4">
+              <button 
+                onClick={() => {
+                  setImportPopup({
+                    isOpen: true,
+                    url: _currentAudioUrl,
+                    type: "audio",
+                    name: audioMetadata?.title || "Generated Audio",
+                  })
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-xl text-xs font-bold hover:bg-foreground hover:text-background transition-colors"
+              >
+                <FolderInput className="w-4 h-4" /> Import to Project
+              </button>
               <div className="flex items-center gap-2 px-3 py-1 bg-muted/50 rounded-lg">
                 <ThumbsUp className="w-4 h-4 text-muted-foreground hover:text-foreground cursor-pointer" />
                 <ThumbsDown className="w-4 h-4 text-muted-foreground hover:text-foreground cursor-pointer" />
@@ -1022,6 +1173,17 @@ export function AudioGeneration() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ─── Import to Project Popup ─── */}
+      {importPopup && (
+        <ImportToProjectPopup
+          isOpen={importPopup.isOpen}
+          onClose={() => setImportPopup(null)}
+          assetUrl={importPopup.url}
+          assetType={importPopup.type}
+          assetName={importPopup.name}
+        />
       )}
     </div>
   )

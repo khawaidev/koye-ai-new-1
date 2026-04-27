@@ -1,9 +1,9 @@
 import { Activity, Box, Check, Gamepad2, Loader2, MessageSquare, Palette, Video } from "lucide-react"
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
-import appIconLight from "../assets/icon.jpg"
-import appIconDark from "../assets/icon.png"
+import appIcon from "../assets/icon2.png"
 import { useTheme } from "../components/theme-provider"
+import { cn } from "../lib/utils"
 import { Button } from "../components/ui/button"
 import { ThemeToggle } from "../components/ui/theme-toggle"
 import { useAuth } from "../hooks/useAuth"
@@ -138,10 +138,9 @@ export function Pricing() {
       const amountInPaise = dbPlan.priceInr * 100
 
       // Convert icon URL to absolute URL for Razorpay
-      const currentIcon = theme === 'dark' ? appIconDark : appIconLight
-      const iconUrl = currentIcon.startsWith('http')
-        ? currentIcon
-        : new URL(currentIcon, window.location.origin).href
+      const iconUrl = appIcon.startsWith('http')
+        ? appIcon
+        : new URL(appIcon, window.location.origin).href
 
       // Open Razorpay checkout
       await openRazorpayCheckout(
@@ -205,9 +204,9 @@ export function Pricing() {
       <div className="border-b border-border px-6 py-4 flex items-center justify-between bg-background text-foreground">
         <div className="flex items-center gap-3 relative">
           <img
-            src={theme === "dark" ? appIconDark : appIconLight}
+            src={appIcon}
             alt="KOYE AI"
-            className="h-12 w-12 object-contain"
+            className={cn("h-12 w-12 object-contain", theme === "dark" && "invert")}
           />
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-foreground font-mono">

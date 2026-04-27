@@ -30,9 +30,10 @@ import { VideoGenerationLoader } from "../ui/VideoGenerationLoader"
 
 import { Dashboard } from "../../pages/Dashboard"
 import { AnimationsLibrary } from "../../pages/AnimationsLibrary"
+import { TasksPage } from "../tasks/TasksPage"
 import { WorkflowStepIndicator, type WorkflowStage as IndicatorStage } from "./WorkflowStepIndicator"
 
-type WorkflowStage = "chat" | "images" | "model" | "texture" | "rig" | "animate" | "audio" | "export" | "build" | "imageGeneration" | "videoGeneration" | "mediaGeneration" | "audioGeneration" | "model3DGeneration" | "sprites" | "dashboard" | "animations"
+type WorkflowStage = "chat" | "images" | "model" | "texture" | "rig" | "animate" | "audio" | "export" | "build" | "imageGeneration" | "videoGeneration" | "mediaGeneration" | "audioGeneration" | "model3DGeneration" | "sprites" | "dashboard" | "animations" | "tasks"
 type GameType = "3d" | "2d" | null
 type AssetType = "static" | "animated" | null
 
@@ -562,21 +563,29 @@ export function WorkflowManager() {
   const handleGenerateVideo = useCallback(async (
     _imageUrls: string[],
     prompt: string,
-    assistantMessageId: string
+    assistantMessageId: string,
+    config?: TaskConfig
   ) => {
     try {
       setIsGenerating(true)
       setIsGeneratingVideo(true)
 
+      // Set generating status on the specific message
+      const currentMessages = useAppStore.getState().messages
+      const targetMessage = currentMessages.find((msg) => msg.id === assistantMessageId)
+      if (targetMessage) {
+        const updatedMessage: Message = { ...targetMessage, isGeneratingVideo: true }
+        setMessages(currentMessages.map(msg => msg.id === assistantMessageId ? updatedMessage : msg))
+      }
+
       // Create video using Runway
-      const videoUrl = await generateVideoWithRunway(prompt || "animated cutscene", {
-        model: "veo3.1",
+      const videoUrl = await generateVideoWithRunway(config?.videoPrompt || prompt || "animated cutscene", {
+        model: config?.aiModel || "veo3.1",
         ratio: "1280:720",
         duration: 8
       })
 
       if (videoUrl) {
-
         // Save video to database if user is authenticated
         if (isAuthenticated && user) {
           try {
@@ -636,6 +645,7 @@ export function WorkflowManager() {
         if (lastMessage) {
           const updatedMessage: Message = {
             ...lastMessage,
+            isGeneratingVideo: false,
             videos: [videoUrl],
           }
           const updatedMessages = currentMessages.map((msg) =>
@@ -654,7 +664,8 @@ export function WorkflowManager() {
       if (lastMessage) {
         const updatedMessage: Message = {
           ...lastMessage,
-          content: lastMessage.content + "\n\nError generating cutscene: " + (error instanceof Error ? error.message : "Unknown error"),
+          isGeneratingVideo: false,
+          generationError: error instanceof Error ? error.message : "Unknown error",
         }
         const updatedMessages = currentMessages.map((msg) =>
           msg.id === assistantMessageId ? updatedMessage : msg
@@ -715,7 +726,7 @@ export function WorkflowManager() {
   }, [])
 
   // Auto-generate images and add to chat message (legacy - kept for backward compatibility)
-  const handleGenerateImagesAuto = useCallback(async (userDescription: string, assistantMessageId: string, overrideCount?: number, preExtractedPrompt?: string) => {
+  const handleGenerateImagesAuto = useCallback(async (userDescription: string, assistantMessageId: string, overrideCount?: number, preExtractedPrompt?: string, config?: TaskConfig) => {
     try {
       // Get all messages to search for the detailed prompt
       const currentMessages = useAppStore.getState().messages
@@ -781,7 +792,8 @@ export function WorkflowManager() {
       setImagePrompt(enhancedPrompt)
 
       // Determine model
-      const model = await determineModel()
+      const defaultModel = await determineModel()
+      const model = (config?.aiModel as ImageModel) || defaultModel
       console.log("📷 Model selected:", model)
       console.log("   (koye-2dv1=ClipDrop, koye-2dv1.5=Pixazo, koye-2dv2=Banana, koye-2dv2.5=LightX)")
 
@@ -1134,7 +1146,7 @@ export function WorkflowManager() {
     }
   }, [messages, stage, gameType, assetType, selectedSampleImage, animationDescription, spriteCount, handleGenerateSprites])
 
-  const handleGenerateModel = useCallback(async (assistantMessageId?: string) => {
+  const handleGenerateModel = useCallback(async (assistantMessageId?: string, config?: TaskConfig) => {
     // When triggered from chat (assistantMessageId exists), skip the approvedViews check
     // and use whatever images are available from the store or from recent chat messages
     if (!assistantMessageId && approvedViews.size < 4) {
@@ -1152,12 +1164,12 @@ export function WorkflowManager() {
     })
 
     try {
-      // Try to get images from the store first
-      let imageMap = {
-        front: images.find((img) => img.view === "front")?.url || "",
-        left: images.find((img) => img.view === "left")?.url || "",
-        right: images.find((img) => img.view === "right")?.url || "",
-        back: images.find((img) => img.view === "back")?.url || "",
+      // Extract from config if available (the user explicitly selected these in the task proposal)
+      let imageMap: any = {
+        front: config?.sourceImage || images.find((img) => img.view === "front")?.url || "",
+        left: config?.leftImage || images.find((img) => img.view === "left")?.url || "",
+        right: config?.rightImage || images.find((img) => img.view === "right")?.url || "",
+        back: config?.backImage || images.find((img) => img.view === "back")?.url || "",
       }
 
       // If triggered from chat and store images are empty, try multiple sources
@@ -1332,7 +1344,7 @@ export function WorkflowManager() {
           const currentMessages = useAppStore.getState().messages
           const updatedMessages = currentMessages.map((msg) =>
             msg.id === assistantMessageId
-              ? { ...msg, content: msg.content + "\n\n❌ No images found for 3D model generation. Please generate images first." }
+              ? { ...msg, content: msg.content + "\n\n❌ No images found for 3D model generation. Please generate images first.", isGenerating3DModel: false }
               : msg
           )
           setMessages(updatedMessages)
@@ -1340,11 +1352,92 @@ export function WorkflowManager() {
         return
       }
 
+      // Set the generating flag on the message
+      if (assistantMessageId) {
+        const currentMessages = useAppStore.getState().messages
+        setMessages(currentMessages.map((msg) =>
+          msg.id === assistantMessageId ? { ...msg, isGenerating3DModel: true } : msg
+        ))
+      }
+
       // Determine if we have all 4 views or just a single image
       const hasAllViews = imageMap.front && imageMap.left && imageMap.right && imageMap.back
-      let hitemJobId: string
+      // If text-to-3d using Tripo
+      if (config?.aiModel === "v3.1" || config?.aiModel === "p1.0") {
+        const { create3DModelTask, checkTaskStatus: checkTripoStatus } = await import("../../services/tripo")
+        const abortController = new AbortController();
+        (window as any).__generationAbortController = abortController
+        
+        const tripoJobId = await create3DModelTask({
+          prompt: config.textPrompt || "A 3D character",
+          model_version: config.aiModel,
+          texture: config.includeTexture !== false,
+          pbr: false
+        })
+        
+        const pollTripoStatus = async () => {
+          if (!useAppStore.getState().isGenerating) return; // user cancelled
+          try {
+            const status = await checkTripoStatus(tripoJobId)
+            const isFinished = status.status === "success"
+            
+            updateJob(jobId, {
+              status: isFinished ? "completed" : "processing",
+              progress: status.progress,
+            })
+            
+            if (isFinished && status.result?.model?.url) {
+              const modelId = uuidv4()
+              const modelUrl = status.result.model.url
+              const model = {
+                id: modelId,
+                assetId: currentAsset?.id || "",
+                url: modelUrl,
+                format: "glb",
+                status: "raw" as ModelStatus,
+                createdAt: new Date().toISOString(),
+              }
+              setCurrentModel(model)
+              // save logic here (skipped to keep chunk small, we can just resolve it)
+              const modelTaskId = (window as any).__currentModelTaskId
+              if (modelTaskId) {
+                useTaskStore.getState().updateTask(modelTaskId, { 
+                  status: "completed", 
+                  completedAt: Date.now(),
+                  resultUrl: modelUrl
+                })
+                delete (window as any).__currentModelTaskId
+              }
+              setIsGenerating(false)
+              setGeneratingText(null)
+              
+              if (assistantMessageId) {
+                const msgs = useAppStore.getState().messages
+                setMessages(msgs.map(m => m.id === assistantMessageId ? { ...m, isGenerating3DModel: false, model3dUrl: modelUrl } : m))
+              }
+            } else if (status.status === "processing" || status.status === "queued" || status.status === "running") {
+              setTimeout(pollTripoStatus, 2000)
+            } else { // failed
+              updateJob(jobId, { status: "failed", error: "Tripo task failed" })
+              setIsGenerating(false)
+              setGeneratingText(null)
+              if (assistantMessageId) {
+                const msgs = useAppStore.getState().messages
+                setMessages(msgs.map(m => m.id === assistantMessageId ? { ...m, isGenerating3DModel: false, generationError: "Tripo task failed" } : m))
+              }
+            }
+          } catch(e) {
+            updateJob(jobId, { status: "failed", error: String(e) })
+            setIsGenerating(false)
+          }
+        }
+        pollTripoStatus()
+        return
+      }
 
-      if (hasAllViews) {
+      // Hitem3D Logic
+      let hitemJobId: string
+      if (hasAllViews && (!config?.aiModel || config.aiModel === "hitem3d")) {
         // Use legacy 4-view mode
         hitemJobId = await generate3DModel(imageMap)
       } else {
@@ -1550,7 +1643,7 @@ export function WorkflowManager() {
   // Listen for direct user confirmation of asset generation (skipping AI response)
   useEffect(() => {
     const handleUserConfirmedGeneration = (event: CustomEvent) => {
-      const { assetType, taskId } = event.detail
+      const { assetType, taskId, config } = event.detail as { assetType: string, taskId: string, config: TaskConfig }
 
       // Assistant message ID for tracking results (no placeholder shown in chat)
       const assistantMessageId = crypto.randomUUID ? crypto.randomUUID() : `gen-${Date.now()}`
@@ -1649,7 +1742,7 @@ export function WorkflowManager() {
       if (assetType === "images") {
         // Don't add placeholder message or block LLM — task runs in background via TaskBar
         savePromptText(actualPrompt, "image")
-        handleGenerateImagesAuto(fullContext, assistantMessageId, undefined, actualPrompt)
+        handleGenerateImagesAuto(fullContext, assistantMessageId, undefined, actualPrompt, config)
           .then(() => {
             const msg = useAppStore.getState().messages.find(m => m.id === assistantMessageId)
             let resultUrl: string | undefined
@@ -1671,17 +1764,73 @@ export function WorkflowManager() {
           // Store the taskId for this model generation job
           (window as any).__currentModelTaskId = taskId
         }
-        handleGenerateModel(assistantMessageId)
-      } else if (assetType === "sprites") {
-        savePromptText(actualPrompt, "sprite")
-        setIsGenerating(false)
-        setGeneratingText(null)
-        markTaskFailed("Sprites need additional context from AI")
-      } else if (assetType === "animations" || assetType === "audio") {
+        handleGenerateModel(assistantMessageId, config)
+      } else if (assetType === "audio") {
         savePromptText(actualPrompt, assetType)
-        setIsGenerating(false)
-        setGeneratingText(null)
-        markTaskFailed("This task type needs more context from AI")
+        
+        const audioPoll = async () => {
+           try {
+              if (config?.audioType === "voice") {
+                const { generateSpeechToDb } = await import("../../services/ttsService")
+                const resultUrl = await generateSpeechToDb(actualPrompt)
+                markTaskComplete(resultUrl)
+              } else {
+                const { generateElevenLabsSfx } = await import("../../services/elevenLabsSfx")
+                const resultUrl = await generateElevenLabsSfx(actualPrompt)
+                markTaskComplete(resultUrl)
+              }
+           } catch(e: any) {
+              markTaskFailed(e.message)
+           }
+        }
+        audioPoll()
+      } else if (assetType === "animations") {
+        savePromptText(actualPrompt, assetType)
+        
+        // Use tripo rigging logic
+        const rigPoll = async () => {
+            try {
+               const { createRiggingTask, checkTaskStatus } = await import("../../services/tripo")
+               if (!config?.sourceImage) throw new Error("No source model provided for rigging")
+               
+               // Extract real model ID from sourceImage string if necessary. Assuming user chose a model from the autocomplete.
+               const jobId = await createRiggingTask({
+                   type: "animate_rig",
+                   original_model_task_id: config.sourceImage,
+                   out_format: "glb"
+               })
+               
+               const poll = async () => {
+                  const status = await checkTaskStatus(jobId)
+                  if (status.status === "success") {
+                      markTaskComplete(status.result?.model?.url)
+                  } else if (status.status === "processing" || status.status === "queued" || status.status === "running") {
+                      setTimeout(poll, 3000)
+                  } else {
+                      markTaskFailed("Rigging failed")
+                  }
+               }
+               poll()
+            } catch(e: any) {
+               markTaskFailed(e.message)
+            }
+        }
+        rigPoll()
+      } else if (assetType === "sprites" || assetType === "video-generation") {
+        savePromptText(actualPrompt, assetType)
+        
+        if (assetType === "video-generation") {
+            handleGenerateVideo([], actualPrompt, assistantMessageId, config)
+              .then(() => {
+                // handleGenerateVideo doesn't return the URL directly, it saves to store. We just mark it completed.
+                markTaskComplete()
+              })
+              .catch((err: any) => markTaskFailed(err?.message))
+        } else {
+            setIsGenerating(false)
+            setGeneratingText(null)
+            markTaskFailed("Sprites need additional context from AI")
+        }
       }
     }
 
@@ -1809,7 +1958,6 @@ export function WorkflowManager() {
       }))
       setImages(placeholderImages)
 
-      // Generate images via model (fallback to 2dv2.5 default)
       const model = await determineModel() || "koye-2dv2.5"
       const imgAbortController = new AbortController();
       (window as any).__generationAbortController = imgAbortController
@@ -1912,6 +2060,8 @@ export function WorkflowManager() {
             {stage === "dashboard" && <Dashboard />}
 
             {stage === "animations" && <AnimationsLibrary />}
+
+            {stage === "tasks" && <TasksPage />}
 
             {stage === "images" && (
               <div className="flex h-full flex-col overflow-hidden">
@@ -2093,7 +2243,7 @@ export function WorkflowManager() {
           </div>
 
           {/* Right Sidebar - Step Indicator */}
-          {stage !== "model3DGeneration" && stage !== "build" && stage !== "dashboard" && stage !== "mediaGeneration" && stage !== "audioGeneration" && stage !== "animations" && (
+          {stage !== "model3DGeneration" && stage !== "build" && stage !== "dashboard" && stage !== "mediaGeneration" && stage !== "audioGeneration" && stage !== "animations" && stage !== "tasks" && (
             <div className="shrink-0 w-32 mt-12 overflow-y-auto overflow-x-hidden scrollbar-thin">
               <WorkflowStepIndicator
                 currentStage={stage === "imageGeneration" ? "chat" : (stage as IndicatorStage)}
@@ -2112,8 +2262,8 @@ export function WorkflowManager() {
         {/* Image Generation Loader - Removed as per user request */}
         {/* <ImageGenerationLoader isVisible={isGeneratingImages && stage === "chat"} /> */}
 
-        {/* Video Generation Loader */}
-        <VideoGenerationLoader isVisible={isGeneratingVideo && stage === "chat"} />
+        {/* Video Generation Loader - Removed as per user request (now in-chat) */}
+
 
         {/* Sign Up Popup */}
         <SignUpPopup
